@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.4
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.5
 Public, read-only Windows security and process audit.
 No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
@@ -12,7 +12,7 @@ Options:
   -MaxSignatureChecks 100  Maximum distinct readable executables checked (20..200).
   -NoHistory               Does not read or write the previous-run aggregate snapshot.
   -NoViewer                Skips the read-only visual inspection window.
-  -NoPause                 Skips the ENTER prompt before the visual panel and at the end.
+  -NoPause                 Skips the ENTER prompt before the visual panel.
 #>
 [CmdletBinding()]
 param(
@@ -62,7 +62,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.4  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.5  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -276,7 +276,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.4'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1130,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
@@ -304,7 +304,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.4'
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -709,13 +709,24 @@ try {
     Check 'SHA-256 deste arquivo' 'INFO' $hash
 } catch { Check 'SHA-256 deste arquivo' 'INFO' 'Nao foi possivel calcular.' }
 
+# ETAPA 1 / 3: intro + progresso ate 100%, sem resultados misturados.
 Write-LMProgress 100 'Consultas concluidas'
+Start-Sleep -Milliseconds 1600
+
+# ETAPA 2 / 3: limpar o terminal antes de exibir os resultados.
+Clear-Host
 $script:QuietAudit = $false
 Say ''
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say '  |                 MVS LOST MEDIA | RESULTADOS                      |' Cyan
+Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
+Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5') DarkGray
+Say ''
+# Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
+$highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas')
 foreach ($entry in $script:Checks) {
+    if ($entry.State -eq 'INFO' -and $highlightInfo -notcontains $entry.Label) { continue }
     $col = switch ($entry.State) { 'OK' { 'Green' } 'REVIEW' { 'Yellow' } default { 'Gray' } }
     Say ('  [{0,-6}] {1}: {2}' -f $entry.State,$entry.Label,$entry.Explanation) $col
 }
@@ -726,11 +737,14 @@ Say ''
 Say (('  RESUMO | OK: {0} | REVISAO: {1} | INFO: {2}' -f $ok,$review,$info)) Cyan
 if ($review -gt 0) { Say '  Existem itens para revisao humana; nao ha veredito automatico.' Yellow }
 else { Say '  Nenhum alerta nesta consulta; isso nao comprova ausencia de cheats.' Green }
-Say '  Todos os resultados dependem das consultas disponiveis nesta sessao.' DarkGray
+Say '  A lista completa sera salva em Documentos\MVS-Lost-Media-T1.' DarkGray
+Say '  Nenhuma consulta garante ausencia ou presenca de cheats.' DarkGray
 Say ''
 if (-not $NoViewer -and $script:GuiReady) {
     if (-not $NoPause) { [void](Read-Host '  Pressione ENTER para abrir o painel visual') }
-    Say '  Abrindo painel de inspecao...' Cyan
+    # ETAPA 3 / 3: painel visual, somente depois do ENTER.
+    Clear-Host
+    Say '  MVS LOST MEDIA | Abrindo painel visual...' Cyan
     $script:QuietAudit = $true
     Open-LMVisualInspector
     $script:QuietAudit = $false
@@ -743,15 +757,15 @@ if (-not $NoViewer -and $script:GuiReady) {
 $ok = @($script:Checks | Where-Object { $_.State -eq 'OK' }).Count
 $review = @($script:Checks | Where-Object { $_.State -eq 'REVIEW' }).Count
 $info = @($script:Checks | Where-Object { $_.State -eq 'INFO' }).Count
-Write-Host ''
-Say '  [RELATORIO FINAL]  Preparando arquivos locais...' Cyan
+# Relatorios sao gravados silenciosamente apos fechar o painel.
+# O PowerShell retorna ao prompt automaticamente, sem ENTER extra.
 if ($null -ne $folder) {
     try {
         $prefix = 'LM-T1-SYSTEM-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $script:Session
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.4',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -763,7 +777,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.4**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
@@ -772,8 +786,6 @@ if ($null -ne $folder) {
             'Resultado observacional: revisao humana, sem prova de cheats.'
         )
         $discordLines | Set-Content -LiteralPath $discordFile -Encoding UTF8 -ErrorAction Stop
-        Say ('  Relatorio TXT: ' + $report) Cyan
-        Say ('  Resumo Discord: ' + $discordFile) Cyan
 
         if (-not $NoHistory -and $script:Stats.ProcessCount -ge 0) {
             # Aggregate counts only: no file names, command lines, paths, or user identifiers.
@@ -790,5 +802,5 @@ if ($null -ne $folder) {
         }
     } catch { Say ('  Falha ao salvar relatorios: ' + $_.Exception.Message) Yellow }
 } else { Say '  Nao foi possivel salvar relatorios nesta execucao.' Yellow }
-Say '  ENCERRADO  |  MVS LOST MEDIA  |  T1 SYSTEM CHECK 2.4' DarkCyan
-if (-not $NoPause) { Write-Host ''; [void](Read-Host '  Pressione ENTER para fechar') }
+# Sem segunda pausa final: volta ao prompt original do PowerShell.
+
