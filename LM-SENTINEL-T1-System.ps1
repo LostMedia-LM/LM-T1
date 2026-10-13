@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.5.3
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.6.0
 Public, read-only Windows security and process audit.
 No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
@@ -35,6 +35,11 @@ $script:GuiReady = $false
 $script:QuietAudit = $true
 $script:LastProgressLength = 0
 $script:GuiReviewItems = @()
+# Baseline kept only in memory: used to compare the first process snapshot with
+# subsequent manual refreshes in the Roblox inspection tab. Never persisted.
+$script:BaselineProcessKeys = @{}
+$script:GuiRobloxCount = 0
+$script:GuiNewCount = 0
 $script:Stats = [ordered]@{
     ProcessCount = -1
     RobloxRunning = $false
@@ -62,7 +67,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.5.3  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.6.0  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -245,8 +250,76 @@ function Open-LMVisualInspector {
             return @($out.ToArray() | Sort-Object Arquivo)
         }
 
+
+        function script:Get-LMRobloxRows {
+            param([object[]]$Items)
+            # Roblox and processes first seen after the initial scan. A new
+            # process is NOT necessarily linked to Roblox, nor evidence of cheats.
+            $out = New-Object 'System.Collections.Generic.List[object]'
+            $robloxCount = 0
+            $newCount = 0
+            foreach ($proc in $Items) {
+                $name = [string]$proc.ProcessName
+                $pidString = [string]$proc.Id
+                $identity = $pidString + '|' + $name.ToLowerInvariant()
+                $isRoblox = ($name -eq 'RobloxPlayerBeta')
+                $isNew = (-not $script:BaselineProcessKeys.ContainsKey($identity))
+                if ($isRoblox) { $robloxCount++ }
+                if ($isNew) { $newCount++ }
+                if (-not $isRoblox -and -not $isNew) { continue }
+
+                $path = $null
+                try { $path = [string]$proc.Path } catch { }
+                $signature = 'Nao verificada'
+                if ([string]::IsNullOrWhiteSpace($path)) {
+                    $signature = 'Caminho indisponivel'
+                } elseif ($script:GuiSignatureMap.ContainsKey($path)) {
+                    $signature = switch ([string]$script:GuiSignatureMap[$path]) {
+                        'Valid' { 'Valida' }
+                        'NotSigned' { 'Sem assinatura' }
+                        default { 'Outro estado' }
+                    }
+                } elseif ($isRoblox) {
+                    # Inspect Roblox on refresh even if it was launched after the
+                    # first scan. Other new processes are NOT signed automatically.
+                    $status = SignatureStatus $path
+                    $script:GuiSignatureMap[$path] = $status
+                    $signature = switch ($status) {
+                        'Valid' { 'Valida' }
+                        'NotSigned' { 'Sem assinatura' }
+                        default { 'Indisponivel' }
+                    }
+                }
+
+                $type = if ($isRoblox) { 'ROBLOX' } else { 'NOVO' }
+                if ($isRoblox) {
+                    $ram = '-'
+                    try { $ram = ([Math]::Round($proc.WorkingSet64 / 1MB)).ToString() } catch { }
+                    $observation = 'RAM: ' + $ram + ' MB'
+                } else {
+                    $observation = 'Novo desde a primeira consulta*'
+                }
+                [void]$out.Add([pscustomobject]@{
+                    Tipo = $type
+                    Processo = $name
+                    PID = $pidString
+                    Assinatura = $signature
+                    Observacao = $observation
+                })
+            }
+            $script:GuiRobloxCount = $robloxCount
+            $script:GuiNewCount = $newCount
+            if ($out.Count -eq 0) {
+                [void]$out.Add([pscustomobject]@{
+                    Tipo='INFO'; Processo='Nenhum Roblox ou novo processo'
+                    PID='-'; Assinatura='-'; Observacao='Clique Atualizar listas'
+                })
+            }
+            return $out.ToArray()
+        }
+
         $script:GuiDriverSignaturesChecked = 0
-        $categories = @('PROCESSOS','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO','INFORMACOES')
+        $categories = @('PROCESSOS','ROBLOX','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO','INFORMACOES')
         $script:Gui23 = @{
             Active = 'PROCESSOS'
             Page = 0
@@ -256,6 +329,7 @@ function Open-LMVisualInspector {
             Rows = @{}
             Columns = @{
                 PROCESSOS = @('Processo','PID','RAM_MB','Assinatura')
+                ROBLOX = @('Tipo','Processo','PID','Assinatura','Observacao')
                 SERVICOS = @('Servico','Descricao','Estado')
                 DRIVERS = @('Driver','Estado','Inicio','Assinatura')
                 INICIALIZACAO = @('Programa','Origem')
@@ -265,6 +339,7 @@ function Open-LMVisualInspector {
         }
         foreach ($key in $categories) { $script:Gui23.Visited[$key] = @{} }
         $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items $script:GuiProcesses)
+        $script:Gui23.Rows['ROBLOX'] = @(Get-LMRobloxRows -Items $script:GuiProcesses)
         $script:Gui23.Rows['SERVICOS'] = @(Get-LMServiceRows)
         $script:Gui23.Rows['DRIVERS'] = @(Get-LMDriverRows)
         $script:Gui23.Rows['INICIALIZACAO'] = @(Get-LMStartupRows)
@@ -280,7 +355,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5.3'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.6.0'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1130,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
@@ -308,7 +383,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5.3'
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / ROBLOX / DRIVERS / INICIALIZACAO  /  BUILD 2.6.0'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -358,6 +433,11 @@ function Open-LMVisualInspector {
                     'Assinaturas validas: ' + $script:Stats.SignedValid + [Environment]::NewLine +
                     'Sem assinatura na amostra: ' + $script:Stats.Unsigned + [Environment]::NewLine +
                     'Drivers consultados: ' + $script:GuiDriverSignaturesChecked + ' arquivos (amostra)' + [Environment]::NewLine + [Environment]::NewLine +
+                    'Aba ROBLOX: processos Roblox e novos desde a primeira leitura.' + [Environment]::NewLine +
+                    'Use Atualizar listas para comparar novamente durante a inspeção.' + [Environment]::NewLine +
+                    'Apenas os nomes e PIDs sao comparados; PIDs podem ser reutilizados.' + [Environment]::NewLine +
+                    'Novo processo nao significa cheat, nem relacao com Roblox.' + [Environment]::NewLine +
+                    'Cheats injetados ou externos por hardware podem nao aparecer.' + [Environment]::NewLine + [Environment]::NewLine +
                     'Assinatura ausente NAO comprova cheat.' + [Environment]::NewLine +
                     'Drivers podem ser assinados por catalogo; esta tela nao e definitiva.' + [Environment]::NewLine +
                     'Atualizar muda a visualizacao, nao a varredura inicial.' + [Environment]::NewLine +
@@ -387,6 +467,37 @@ function Open-LMVisualInspector {
                 $tab.Controls.Add($grid)
             }
         }
+
+
+        # Details are only revealed on demand; they may contain a local user path.
+        $grids['ROBLOX'].Add_CellDoubleClick({
+            param($sender,$eventArgs)
+            try {
+                if ($eventArgs.RowIndex -lt 0) { return }
+                $selected = $sender.Rows[$eventArgs.RowIndex]
+                $idText = [string]$selected.Cells['PID'].Value
+                $chosenPid = 0
+                if (-not [int]::TryParse($idText,[ref]$chosenPid)) { return }
+                $chosen = Get-Process -Id $chosenPid -ErrorAction Stop
+                $location = 'Indisponivel'
+                try {
+                    if ($chosen.Path) { $location = [string]$chosen.Path }
+                } catch { }
+                $state = 'Nao verificada'
+                if ($location -ne 'Indisponivel') {
+                    $state = SignatureStatus $location
+                }
+                $detailText = ('Processo: ' + $chosen.ProcessName + [Environment]::NewLine +
+                    'PID: ' + $chosenPid + [Environment]::NewLine +
+                    'Assinatura: ' + $state + [Environment]::NewLine +
+                    'Caminho: ' + $location + [Environment]::NewLine + [Environment]::NewLine +
+                    'O caminho pode conter informacoes pessoais. Revise sua gravacao.' + [Environment]::NewLine +
+                    'Nenhuma dessas informacoes confirma uso de cheats.')
+                [void][System.Windows.Forms.MessageBox]::Show($detailText,'MVS LOST MEDIA | Detalhes do processo')
+            } catch {
+                [void][System.Windows.Forms.MessageBox]::Show('Processo encerrado ou dados indisponiveis.','MVS LOST MEDIA')
+            }
+        })
 
         $bottom = New-Object System.Windows.Forms.Panel
         $bottom.Dock = 'Fill'; $bottom.BackColor = $dark
@@ -472,13 +583,17 @@ function Open-LMVisualInspector {
             $controls.Grids[$category].DataSource = $table
             $visits = $state.Visited[$category].Count
             if ($filter.Length -eq 0) {
-                $controls.Progress.Text = ('Pagina {0}/{1}  |  Visitadas {2}/{1}' -f ($state.Page+1),$pages,$visits)
+                if ($category -eq 'ROBLOX') {
+                    $controls.Progress.Text = ('Pagina {0}/{1} | Visitadas {2}/{1} | Novos: {3}' -f ($state.Page+1),$pages,$visits,$script:GuiNewCount)
+                } else {
+                    $controls.Progress.Text = ('Pagina {0}/{1}  |  Visitadas {2}/{1}' -f ($state.Page+1),$pages,$visits)
+                }
             } else {
                 $controls.Progress.Text = ('Filtrado: pagina {0}/{1}  |  {2} itens' -f ($state.Page+1),$pages,$total)
             }
             $controls.Prev.Enabled = ($state.Page -gt 0)
             $controls.Next.Enabled = ($state.Page -lt ($pages - 1))
-            $controls.Refresh.Enabled = ($category -eq 'PROCESSOS' -or $category -eq 'SERVICOS')
+            $controls.Refresh.Enabled = ($category -eq 'PROCESSOS' -or $category -eq 'SERVICOS' -or $category -eq 'ROBLOX')
         }
         $prev.Add_Click({ $script:Gui23.Page--; & $script:Gui23Render })
         $next.Add_Click({ $script:Gui23.Page++; & $script:Gui23Render })
@@ -496,9 +611,12 @@ function Open-LMVisualInspector {
         })
         $refresh.Add_Click({
             try {
-                $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items @(Get-Process -ErrorAction Stop))
+                $fresh = @(Get-Process -ErrorAction Stop)
+                $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items $fresh)
+                $script:Gui23.Rows['ROBLOX'] = @(Get-LMRobloxRows -Items $fresh)
                 $script:Gui23.Rows['SERVICOS'] = @(Get-LMServiceRows)
                 $script:Gui23.Visited['PROCESSOS'] = @{}
+                $script:Gui23.Visited['ROBLOX'] = @{}
                 $script:Gui23.Visited['SERVICOS'] = @{}
                 $script:Gui23.Page = 0
                 & $script:Gui23Render
@@ -510,10 +628,11 @@ function Open-LMVisualInspector {
         # The visual panel is shown after the console summary and ENTER.
         [void]$window.ShowDialog()
         $visitedSummary = @()
-        foreach ($cat in @('PROCESSOS','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
+        foreach ($cat in @('PROCESSOS','ROBLOX','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
             $visitedSummary += ($cat + '=' + [string]$script:Gui23.Visited[$cat].Count)
         }
         Check 'Inspecao visual' 'INFO' ('Janela encerrada. Paginas visitadas (nao comprova gravacao): ' + ($visitedSummary -join ', ') + '.')
+        Check 'Inspecao Roblox' 'INFO' ("Ultima leitura do painel: $script:GuiRobloxCount processo(s) Roblox; $script:GuiNewCount novo(s) processo(s) desde a primeira consulta. Nao e indicio conclusivo de cheat.")
     } catch {
         # Show a precise failure location to debug GUI compatibility without guessing.
         $detail = $_
@@ -593,6 +712,11 @@ try {
     # A janela pode funcionar mesmo que a etapa de assinaturas falhe depois.
     $script:GuiProcesses = @($runningProcesses)
     $script:GuiReady = $true
+    foreach ($pr in $runningProcesses) {
+        $baselineName = ([string]$pr.ProcessName).ToLowerInvariant()
+        $baselineKey = ([string]$pr.Id) + '|' + $baselineName
+        $script:BaselineProcessKeys[$baselineKey] = $true
+    }
     Check 'Processos ativos' 'INFO' ([string]$runningProcesses.Count + ' processos no momento da consulta.')
     $roblox = @($runningProcesses | Where-Object { $_.ProcessName -eq 'RobloxPlayerBeta' })
     $script:Stats.RobloxRunning = ($roblox.Count -gt 0)
@@ -744,7 +868,7 @@ Say '  +------------------------------------------------------------------+' Dar
 Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
 Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5.3') DarkGray
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.6.0') DarkGray
 Say ''
 # Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
 $highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas','Processos')
@@ -760,6 +884,7 @@ Say ''
 Say (('  RESUMO | OK: {0} | REVISAO: {1} | INFO: {2}' -f $ok,$review,$info)) Cyan
 if ($review -gt 0) { Say '  Existem itens para revisao humana; nao ha veredito automatico.' Yellow }
 else { Say '  Nenhum alerta nesta consulta; isso nao comprova ausencia de cheats.' Green }
+Say '  O painel inclui ROBLOX INSPECTION; clique Atualizar listas para comparar.'
 Say '  A lista completa sera salva em Documentos\MVS-Lost-Media-T1.' DarkGray
 Say '  Nenhuma consulta garante ausencia ou presenca de cheats.' DarkGray
 Say ''
@@ -770,6 +895,12 @@ if (-not $NoViewer) {
         try {
             $script:GuiProcesses = @(Get-Process -ErrorAction Stop)
             $script:GuiReady = $true
+            if ($script:BaselineProcessKeys.Count -eq 0) {
+                foreach ($pr in $script:GuiProcesses) {
+                    $baselineKey = ([string]$pr.Id) + '|' + ([string]$pr.ProcessName).ToLowerInvariant()
+                    $script:BaselineProcessKeys[$baselineKey] = $true
+                }
+            }
         } catch {
             Check 'Processos do painel' 'INFO' 'Nova leitura indisponivel; outras abas ainda podem funcionar.'
         }
@@ -795,7 +926,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5.3',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.6.0',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -807,7 +938,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5.3**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.6.0**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
