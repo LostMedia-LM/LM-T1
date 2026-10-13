@@ -1,7 +1,9 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.6.0
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.7.0
 Public, read-only Windows security and process audit.
+Investigation tab shows only initial executable sample and Roblox, not injected code.
+Defender history counts are limited and cannot establish a clean/compromised machine.
 No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
 Unsigned files or other observations are NOT proof of cheating.
@@ -40,6 +42,11 @@ $script:GuiReviewItems = @()
 $script:BaselineProcessKeys = @{}
 $script:GuiRobloxCount = 0
 $script:GuiNewCount = 0
+# Local-only data: never written to TXT, JSON or Discord reports.
+$script:InvestigationPaths = @{}
+$script:DefenderRecentCount = -1
+$script:DefenderEntriesChecked = 0
+$script:DefenderSummary = 'Consulta ainda nao executada.'
 $script:Stats = [ordered]@{
     ProcessCount = -1
     RobloxRunning = $false
@@ -67,7 +74,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.6.0  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.7.0  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -318,8 +325,100 @@ function Open-LMVisualInspector {
             return $out.ToArray()
         }
 
+
+        function script:Get-LMInvestigationRows {
+            # A focused view of the initial executable sample. Only unsigned /
+            # unverifiable items and the Roblox executable are included.
+            # CompanyName is supplied by the executable and is NOT trusted proof.
+            $out = New-Object 'System.Collections.Generic.List[object]'
+            $script:InvestigationPaths = @{}
+            $observed = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            $items = New-Object 'System.Collections.Generic.List[object]'
+            foreach ($entry in $script:GuiReviewItems) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$entry.Path) -and $observed.Add([string]$entry.Path)) {
+                    [void]$items.Add([pscustomobject]@{ Path=[string]$entry.Path; Type='ASSINATURA'; State=[string]$entry.Signature })
+                }
+            }
+            foreach ($proc in $script:GuiProcesses) {
+                if ([string]$proc.ProcessName -ne 'RobloxPlayerBeta') { continue }
+                $loc = $null
+                try { $loc = [string]$proc.Path } catch { }
+                if (-not [string]::IsNullOrWhiteSpace($loc) -and $observed.Add($loc)) {
+                    $state = if ($script:GuiSignatureMap.ContainsKey($loc)) { [string]$script:GuiSignatureMap[$loc] } else { 'Nao verificada' }
+                    [void]$items.Add([pscustomobject]@{ Path=$loc; Type='ROBLOX'; State=$state })
+                }
+            }
+            $i = 0
+            foreach ($entry in $items) {
+                $loc = [string]$entry.Path
+                if (-not [IO.File]::Exists($loc)) { continue }
+                $i++
+                $key = ('{0:000}' -f $i)
+                $script:InvestigationPaths[$key] = $loc
+                $procNames = @(
+                    foreach ($proc in $script:GuiProcesses) {
+                        try {
+                            if ([string]::Equals([string]$proc.Path,$loc,[StringComparison]::OrdinalIgnoreCase)) {
+                                [string]$proc.ProcessName
+                            }
+                        } catch { }
+                    }
+                ) | Sort-Object -Unique | Select-Object -First 2
+                $label = if (@($procNames).Count -gt 0) { @($procNames) -join ', ' } else { 'Indisponivel' }
+                $company = 'Nao informada'
+                try {
+                    $reported = [string]([System.Diagnostics.FileVersionInfo]::GetVersionInfo($loc).CompanyName)
+                    if (-not [string]::IsNullOrWhiteSpace($reported)) { $company = $reported }
+                } catch { }
+                if ($company.Length -gt 55) { $company = $company.Substring(0,55) + '...' }
+                $origin = 'Outro local'
+                if ($loc.StartsWith(($env:SystemRoot.TrimEnd([char]92) + [char]92),[StringComparison]::OrdinalIgnoreCase)) {
+                    $origin = 'Pasta Windows'
+                } elseif ($loc.StartsWith(($env:ProgramFiles.TrimEnd([char]92) + [char]92),[StringComparison]::OrdinalIgnoreCase)) {
+                    $origin = 'Arquivos de Programas'
+                } elseif ($env:LOCALAPPDATA -and $loc.StartsWith(($env:LOCALAPPDATA.TrimEnd([char]92) + [char]92),[StringComparison]::OrdinalIgnoreCase)) {
+                    $origin = 'AppData Local'
+                } elseif ($env:TEMP -and $loc.StartsWith(($env:TEMP.TrimEnd([char]92) + [char]92),[StringComparison]::OrdinalIgnoreCase)) {
+                    $origin = 'Pasta temporaria'
+                } elseif ($env:USERPROFILE -and $loc.StartsWith(($env:USERPROFILE.TrimEnd([char]92) + [char]92),[StringComparison]::OrdinalIgnoreCase)) {
+                    $origin = 'Pasta de usuario'
+                }
+                [void]$out.Add([pscustomobject]@{
+                    ID = $key
+                    Tipo = [string]$entry.Type
+                    Arquivo = [IO.Path]::GetFileName($loc)
+                    Processo = $label
+                    Assinatura = [string]$entry.State
+                    Fornecedor = $company
+                    Origem = $origin
+                })
+            }
+            if ($out.Count -eq 0) {
+                [void]$out.Add([pscustomobject]@{
+                    ID='-';Tipo='INFO';Arquivo='Nenhum item da amostra para revisao'
+                    Processo='-';Assinatura='-';Fornecedor='-';Origem='-'
+                })
+            }
+            return $out.ToArray()
+        }
+
+        function script:Get-LMDefenderRows {
+            # Aggregate-only security observations for this session.
+            $out = New-Object 'System.Collections.Generic.List[object]'
+            foreach ($check in $script:Checks) {
+                if ($check.Label -match '^Microsoft Defender$|^Protecao em tempo real$|^Tamper Protection$|^Firewall |^Servico WinDefend$|^Historico Defender$') {
+                    [void]$out.Add([pscustomobject]@{
+                        Verificacao=[string]$check.Label
+                        Estado=[string]$check.State
+                        Resultado=[string]$check.Explanation
+                    })
+                }
+            }
+            return $out.ToArray()
+        }
+
         $script:GuiDriverSignaturesChecked = 0
-        $categories = @('PROCESSOS','ROBLOX','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO','INFORMACOES')
+        $categories = @('PROCESSOS','ROBLOX','INVESTIGACAO','DEFENDER','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO','INFORMACOES')
         $script:Gui23 = @{
             Active = 'PROCESSOS'
             Page = 0
@@ -330,6 +429,8 @@ function Open-LMVisualInspector {
             Columns = @{
                 PROCESSOS = @('Processo','PID','RAM_MB','Assinatura')
                 ROBLOX = @('Tipo','Processo','PID','Assinatura','Observacao')
+                INVESTIGACAO = @('ID','Tipo','Arquivo','Processo','Assinatura','Fornecedor','Origem')
+                DEFENDER = @('Verificacao','Estado','Resultado')
                 SERVICOS = @('Servico','Descricao','Estado')
                 DRIVERS = @('Driver','Estado','Inicio','Assinatura')
                 INICIALIZACAO = @('Programa','Origem')
@@ -340,6 +441,8 @@ function Open-LMVisualInspector {
         foreach ($key in $categories) { $script:Gui23.Visited[$key] = @{} }
         $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items $script:GuiProcesses)
         $script:Gui23.Rows['ROBLOX'] = @(Get-LMRobloxRows -Items $script:GuiProcesses)
+        $script:Gui23.Rows['INVESTIGACAO'] = @(Get-LMInvestigationRows)
+        $script:Gui23.Rows['DEFENDER'] = @(Get-LMDefenderRows)
         $script:Gui23.Rows['SERVICOS'] = @(Get-LMServiceRows)
         $script:Gui23.Rows['DRIVERS'] = @(Get-LMDriverRows)
         $script:Gui23.Rows['INICIALIZACAO'] = @(Get-LMStartupRows)
@@ -347,6 +450,7 @@ function Open-LMVisualInspector {
         Check 'Drivers' 'INFO' ("$(@($script:Gui23.Rows['DRIVERS']).Count) itens; $script:GuiDriverSignaturesChecked arquivos consultados (amostra nao conclusiva).")
         Check 'Inicializacao' 'INFO' ("$(@($script:Gui23.Rows['INICIALIZACAO']).Count) entradas listadas na janela, sem comandos/caminhos nos relatorios.")
         Check 'Itens para revisao visual' 'INFO' ("$(@($script:Gui23.Rows['REVISAO']).Count) arquivos da amostra de processos disponiveis na aba REVISAO.")
+        Check 'Investigacao local' 'INFO' ('Aba INVESTIGACAO disponivel; fornecedor/origem sao informativos, nao provas. Hash SHA-256 apenas sob duplo clique.')
 
         $dark = [System.Drawing.Color]::FromArgb(14,24,36)
         $panel = [System.Drawing.Color]::FromArgb(23,37,54)
@@ -355,10 +459,10 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.6.0'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.7.0'
         $window.StartPosition = 'CenterScreen'
-        $window.Size = New-Object System.Drawing.Size(1130,745)
-        $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
+        $window.Size = New-Object System.Drawing.Size(1260,745)
+        $window.MinimumSize = New-Object System.Drawing.Size(1160,620)
         $window.BackColor = $dark
         $window.ForeColor = $white
         $window.Font = New-Object System.Drawing.Font('Segoe UI',10)
@@ -383,7 +487,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / ROBLOX / DRIVERS / INICIALIZACAO  /  BUILD 2.6.0'
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / ROBLOX / INVESTIGACAO / DEFENDER  /  BUILD 2.7.0'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -432,7 +536,10 @@ function Open-LMVisualInspector {
                     'Processos na leitura inicial: ' + $script:Stats.ProcessCount + [Environment]::NewLine +
                     'Assinaturas validas: ' + $script:Stats.SignedValid + [Environment]::NewLine +
                     'Sem assinatura na amostra: ' + $script:Stats.Unsigned + [Environment]::NewLine +
-                    'Drivers consultados: ' + $script:GuiDriverSignaturesChecked + ' arquivos (amostra)' + [Environment]::NewLine + [Environment]::NewLine +
+                    'Drivers consultados: ' + $script:GuiDriverSignaturesChecked + ' arquivos (amostra)' + [Environment]::NewLine +
+                    'Defender: ' + $script:DefenderSummary + [Environment]::NewLine + [Environment]::NewLine +
+                    'INVESTIGACAO: amostra de assinaturas e Roblox, fornecedor declarado.' + [Environment]::NewLine +
+                    'Duplo clique: SHA-256 local sob demanda, sem enviar arquivo.' + [Environment]::NewLine +
                     'Aba ROBLOX: processos Roblox e novos desde a primeira leitura.' + [Environment]::NewLine +
                     'Use Atualizar listas para comparar novamente durante a inspeção.' + [Environment]::NewLine +
                     'Apenas os nomes e PIDs sao comparados; PIDs podem ser reutilizados.' + [Environment]::NewLine +
@@ -443,7 +550,8 @@ function Open-LMVisualInspector {
                     'Atualizar muda a visualizacao, nao a varredura inicial.' + [Environment]::NewLine +
                     'Paginas visitadas nao comprovam que a gravacao esteja completa.' + [Environment]::NewLine +
                     'Nenhuma alteracao de seguranca ou envio de dados e realizada.' + [Environment]::NewLine +
-                    'Nomes, PIDs e programas aparecem apenas nesta janela.')
+                    'Nomes, PIDs e programas aparecem apenas nesta janela.' + [Environment]::NewLine +
+                    'Historico Defender: registros nao implicam trapaça no Roblox.')
                 $tab.Controls.Add($info)
             } else {
                 $grid = New-Object System.Windows.Forms.DataGridView
@@ -499,6 +607,32 @@ function Open-LMVisualInspector {
             }
         })
 
+
+        # File hash and signer metadata are calculated ONLY after a direct user
+        # double-click; full local path stays in memory, never in TXT/Discord.
+        $grids['INVESTIGACAO'].Add_CellDoubleClick({
+            param($sender,$eventArgs)
+            try {
+                if ($eventArgs.RowIndex -lt 0) { return }
+                $id = [string]$sender.Rows[$eventArgs.RowIndex].Cells['ID'].Value
+                if (-not $script:InvestigationPaths.ContainsKey($id)) { return }
+                $loc = [string]$script:InvestigationPaths[$id]
+                if (-not [IO.File]::Exists($loc)) { throw 'Arquivo nao localizado.' }
+                $sig = SignatureStatus $loc
+                $sizeMB = [math]::Round((Get-Item -LiteralPath $loc -ErrorAction Stop).Length/1MB,2)
+                $digest = (Get-FileHash -LiteralPath $loc -Algorithm SHA256 -ErrorAction Stop).Hash
+                $msg = ('Arquivo: ' + [IO.Path]::GetFileName($loc) + [Environment]::NewLine +
+                    'Assinatura: ' + $sig + [Environment]::NewLine +
+                    'Tamanho: ' + $sizeMB + ' MB' + [Environment]::NewLine +
+                    'SHA-256: ' + $digest + [Environment]::NewLine + [Environment]::NewLine +
+                    'Este hash identifica bytes, nao determina se o arquivo e malicioso.' + [Environment]::NewLine +
+                    'Metadados podem ser falsificados. Nenhum dado foi enviado.')
+                [void][System.Windows.Forms.MessageBox]::Show($msg,'MVS LOST MEDIA | Inspecao local do arquivo')
+            } catch {
+                [void][System.Windows.Forms.MessageBox]::Show('Nao foi possivel consultar este arquivo: ' + $_.Exception.GetType().Name,'MVS LOST MEDIA')
+            }
+        })
+
         $bottom = New-Object System.Windows.Forms.Panel
         $bottom.Dock = 'Fill'; $bottom.BackColor = $dark
         $privacy = New-Object System.Windows.Forms.Label
@@ -520,16 +654,16 @@ function Open-LMVisualInspector {
         $progress.ForeColor = $cyan
         $progress.Font = New-Object System.Drawing.Font('Consolas',10)
         $progress.Location = New-Object System.Drawing.Point(302,46)
-        $progress.Size = New-Object System.Drawing.Size(460,32)
+        $progress.Size = New-Object System.Drawing.Size(555,32)
         $bottom.Controls.Add($progress)
         $refresh = New-Object System.Windows.Forms.Button
         $refresh.Text = 'Atualizar listas'
-        $refresh.Location = New-Object System.Drawing.Point(760,42)
+        $refresh.Location = New-Object System.Drawing.Point(900,42)
         $refresh.Size = New-Object System.Drawing.Size(142,35)
         $bottom.Controls.Add($refresh)
         $finish = New-Object System.Windows.Forms.Button
         $finish.Text = 'Concluir verificacao'
-        $finish.Location = New-Object System.Drawing.Point(915,42)
+        $finish.Location = New-Object System.Drawing.Point(1050,42)
         $finish.Size = New-Object System.Drawing.Size(175,35)
         $finish.Add_Click({ $script:Gui23Window.Close() })
         $bottom.Controls.Add($finish)
@@ -628,7 +762,7 @@ function Open-LMVisualInspector {
         # The visual panel is shown after the console summary and ENTER.
         [void]$window.ShowDialog()
         $visitedSummary = @()
-        foreach ($cat in @('PROCESSOS','ROBLOX','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
+        foreach ($cat in @('PROCESSOS','ROBLOX','INVESTIGACAO','DEFENDER','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
             $visitedSummary += ($cat + '=' + [string]$script:Gui23.Visited[$cat].Count)
         }
         Check 'Inspecao visual' 'INFO' ('Janela encerrada. Paginas visitadas (nao comprova gravacao): ' + ($visitedSummary -join ', ') + '.')
@@ -809,7 +943,29 @@ try {
 }
 
 Write-LMProgress 85 'Processos e assinaturas consultados'
-Write-LMSection '05' 'Comparacao entre execucoes'
+# Defender history is not a cheat detector. Aggregate-only; never read or
+# save detection file paths, threat names, or other event-level details.
+try {
+    $cutoff = (Get-Date).AddDays(-7)
+    $countRecent = 0
+    $countChecked = 0
+    Get-MpThreatDetection -ErrorAction Stop | Select-Object -First 200 | ForEach-Object {
+        $countChecked++
+        try {
+            $when = [datetime]$_.InitialDetectionTime
+            if ($when -ge $cutoff -and $when -le (Get-Date).AddMinutes(5)) { $countRecent++ }
+        } catch { }
+    }
+    $script:DefenderEntriesChecked = $countChecked
+    $script:DefenderRecentCount = $countRecent
+    $script:DefenderSummary = ("$countRecent registro(s) nos ultimos 7 dias; $countChecked registro(s) consultados (limite 200).")
+    Check 'Historico Defender' 'INFO' ($script:DefenderSummary + ' Alertas podem nao estar ligados ao Roblox.')
+} catch {
+    $script:DefenderSummary = 'Historico nao disponivel; antivirus de terceiros ou restricoes podem explicar.'
+    Check 'Historico Defender' 'INFO' $script:DefenderSummary
+}
+Write-LMProgress 89 'Historico de alertas consultado'
+Write-LMSection '05' 'Comparacao entre execucoes' 
 $folder = $null
 $previousSnapshot = $null
 try {
@@ -868,7 +1024,7 @@ Say '  +------------------------------------------------------------------+' Dar
 Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
 Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.6.0') DarkGray
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.7.0') DarkGray
 Say ''
 # Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
 $highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas','Processos')
@@ -884,7 +1040,7 @@ Say ''
 Say (('  RESUMO | OK: {0} | REVISAO: {1} | INFO: {2}' -f $ok,$review,$info)) Cyan
 if ($review -gt 0) { Say '  Existem itens para revisao humana; nao ha veredito automatico.' Yellow }
 else { Say '  Nenhum alerta nesta consulta; isso nao comprova ausencia de cheats.' Green }
-Say '  O painel inclui ROBLOX INSPECTION; clique Atualizar listas para comparar.'
+Say '  Proxima etapa: painel com ROBLOX, INVESTIGACAO e DEFENDER.'
 Say '  A lista completa sera salva em Documentos\MVS-Lost-Media-T1.' DarkGray
 Say '  Nenhuma consulta garante ausencia ou presenca de cheats.' DarkGray
 Say ''
@@ -926,7 +1082,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.6.0',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.7.0',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -938,7 +1094,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.6.0**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.7.0**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
