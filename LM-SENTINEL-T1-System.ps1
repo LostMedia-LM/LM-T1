@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.5.2
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.5.3
 Public, read-only Windows security and process audit.
 No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
@@ -62,7 +62,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.5.2  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.5.3  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -151,7 +151,7 @@ function Open-LMVisualInspector {
                     Assinatura = $signature
                 })
             }
-            return @($out | Sort-Object Processo, PID)
+            return @($out.ToArray() | Sort-Object Processo, PID)
         }
 
         function script:Get-LMServiceRows {
@@ -202,7 +202,8 @@ function Open-LMVisualInspector {
                 }
             } catch { return @() }
             $script:GuiDriverSignaturesChecked = $checked
-            return @($out)
+            # WinPS 5.1: converte List[object] em object[] antes de retornar.
+            return $out.ToArray()
         }
 
         function script:Get-LMStartupRows {
@@ -241,7 +242,7 @@ function Open-LMVisualInspector {
                     Situacao = $result
                 })
             }
-            return @($out | Sort-Object Arquivo)
+            return @($out.ToArray() | Sort-Object Arquivo)
         }
 
         $script:GuiDriverSignaturesChecked = 0
@@ -279,7 +280,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5.2'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5.3'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1130,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
@@ -307,7 +308,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5.2'
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5.3'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -520,6 +521,9 @@ function Open-LMVisualInspector {
         $type = $detail.Exception.GetType().Name
         Say ('  Nao foi possivel concluir o painel: ' + $type + ' (linha ' + $line + ').') Yellow
         Say ('  Detalhe tecnico: ' + $detail.Exception.Message) DarkGray
+        if ($detail.InvocationInfo -and $detail.InvocationInfo.Line) {
+            Say ('  Instrucao: ' + $detail.InvocationInfo.Line.Trim()) DarkGray
+        }
         Check 'Inspecao visual' 'INFO' ('Janela nao concluida: ' + $type + ' (linha ' + $line + ').')
     } finally {
         if ($null -ne $window) { $window.Dispose() }
@@ -646,7 +650,7 @@ try {
     $script:Stats.Unsigned = $unsigned
     $script:Stats.OtherSignature = $other
     $script:GuiProcesses = @($runningProcesses)
-    $script:GuiReviewItems = @($reviewLocal)
+    $script:GuiReviewItems = $reviewLocal.ToArray()
     $script:GuiReady = $true
     Check 'Assinaturas verificadas' 'INFO' ("$processed/$($locations.Count) executaveis: $valid validos, $unsigned sem assinatura, $other outros estados.")
     if ($locations.Count -gt $processed) {
@@ -740,7 +744,7 @@ Say '  +------------------------------------------------------------------+' Dar
 Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
 Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5.2') DarkGray
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5.3') DarkGray
 Say ''
 # Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
 $highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas','Processos')
@@ -791,7 +795,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5.2',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5.3',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -803,7 +807,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5.2**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5.3**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
