@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.11.0
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.12.0
 Public, read-only Windows security and process audit.
 Investigation tab shows only initial executable sample and Roblox, not injected code.
 Defender history counts are limited and cannot establish a clean/compromised machine.
@@ -101,7 +101,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.11.0  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.12.0  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -890,7 +890,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.11.0'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.12.0'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1260,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1160,620)
@@ -918,7 +918,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK / ROBLOX / ATIVIDADE / AUDITORIA / BUILD 2.11.0'
+        $subtitle.Text = 'SYSTEM CHECK / ROBLOX / ATIVIDADE / AUDITORIA / BUILD 2.12.0'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -1477,11 +1477,11 @@ try {
     Check 'SHA-256 deste arquivo' 'INFO' $hash
 } catch { Check 'SHA-256 deste arquivo' 'INFO' 'Nao foi possivel calcular.' }
 
-# ETAPA 1 / 3: intro + progresso ate 100%, sem resultados misturados.
+# ETAPA 1 / 5: intro + progresso ate 100%, sem resultados misturados.
 Write-LMProgress 100 'Consultas concluidas'
 Start-Sleep -Milliseconds 1600
 
-# ETAPA 2 / 3: limpar o terminal antes de exibir os resultados.
+# ETAPA 2 / 5: limpar o terminal antes de exibir os resultados.
 Clear-Host
 $script:QuietAudit = $false
 Say ''
@@ -1489,7 +1489,7 @@ Say '  +------------------------------------------------------------------+' Dar
 Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
 Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.11.0') DarkGray
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.12.0') DarkGray
 Say ''
 # Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
 $highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas','Processos')
@@ -1527,7 +1527,7 @@ if (-not $NoViewer) {
         }
     }
     if (-not $NoPause) { [void](Read-Host '  Pressione ENTER para prosseguir para a proxima etapa') }
-    # ETAPA 3 / 3: o painel e a proxima etapa; sem mensagem de carregamento.
+    # ETAPA 3 / 5: painel visual; ao concluir, segue para as verificacoes finais.
     Clear-Host
     $script:QuietAudit = $true
     Open-LMVisualInspector
@@ -1535,19 +1535,70 @@ if (-not $NoViewer) {
 } else {
     Say '  Painel visual omitido por -NoViewer.' DarkGray
 }
-# After the visual inspection, its observations are included in both reports.
+# ETAPA 4 / 5: conferencia final, exibida APOS encerrar o painel.
+# O painel nao e o fim da verificacao. Nenhuma mudanca feita no Windows.
+Clear-Host
+$script:QuietAudit = $true
+Say ''
+Say '  +------------------------------------------------------------------+' DarkCyan
+Say '  |              MVS LOST MEDIA | T1 SYSTEM CHECK                    |' Cyan
+Say '  |                   ETAPA 4 / 5: CONFERENCIA FINAL                  |' White
+Say '  +------------------------------------------------------------------+' DarkCyan
+Say ('  Sessao: ' + $script:Session + ' | BUILD 2.12.0') DarkGray
+Say ''
+try {
+    $endProcesses = @(Get-Process -ErrorAction Stop)
+    $endCount = $endProcesses.Count
+    $initialCount = [int]$script:Stats.ProcessCount
+    $robloxEnd = @($endProcesses | Where-Object { $_.ProcessName -eq 'RobloxPlayerBeta' }).Count
+    if ($initialCount -ge 0) {
+        $delta = $endCount - $initialCount
+        $deltaLabel = if ($delta -gt 0) { '+' + [string]$delta } else { [string]$delta }
+        Say ('  Processos: inicio {0} | final {1} | diferenca {2}' -f $initialCount,$endCount,$deltaLabel) Gray
+        Check 'Conferencia apos painel' 'INFO' ('Inicio: ' + $initialCount + '; final: ' + $endCount + '; diferenca: ' + $deltaLabel + '. Variacoes sao normais.')
+    } else {
+        Say ('  Processos em execucao: ' + $endCount) Gray
+        Check 'Conferencia apos painel' 'INFO' ('Processos no final: ' + $endCount + '. Leitura inicial indisponivel.')
+    }
+    if ($robloxEnd -gt 0) { Say '  Roblox: em execucao na conferencia final.' Green }
+    else { Say '  Roblox: nao detectado na conferencia final.' Yellow }
+    Check 'Roblox apos painel' 'INFO' ('Processo Roblox no final: ' + $(if ($robloxEnd -gt 0) { 'sim' } else { 'nao' }) + '. Snapshot pontual, nao e monitoramento continuo.')
+} catch {
+    Say '  Nao foi possivel realizar a leitura final dos processos.' Yellow
+    Check 'Conferencia apos painel' 'INFO' 'Consulta final indisponivel; sem conclusao sobre cheats.'
+}
+try {
+    $mpEnd = Get-MpComputerStatus -ErrorAction Stop
+    if ($null -ne $mpEnd.RealTimeProtectionEnabled) {
+        $rtText = if ([bool]$mpEnd.RealTimeProtectionEnabled) { 'habilitada' } else { 'nao indicada como habilitada' }
+        Say ('  Protecao em tempo real: ' + $rtText + '.') Gray
+        Check 'Protecao apos painel' 'INFO' ('Estado no momento final: ' + $rtText + '.')
+    } else {
+        Say '  Protecao em tempo real: estado nao informado.' DarkGray
+        Check 'Protecao apos painel' 'INFO' 'Estado final nao informado pelo Windows.'
+    }
+} catch {
+    Say '  Protecao em tempo real: consulta final indisponivel.' DarkGray
+    Check 'Protecao apos painel' 'INFO' 'Consulta final indisponivel.'
+}
+Say ''
+Say '  Conferencia encerrada. Preparando relatorios locais...' Cyan
+Say '  Mudancas de processos ou estados isolados nao provam cheats.' DarkGray
+
+# ETAPA 5 / 5: salvar os relatórios e exibir confirmacao visivel.
 $ok = @($script:Checks | Where-Object { $_.State -eq 'OK' }).Count
 $review = @($script:Checks | Where-Object { $_.State -eq 'REVIEW' }).Count
 $info = @($script:Checks | Where-Object { $_.State -eq 'INFO' }).Count
-# Relatorios sao gravados silenciosamente apos fechar o painel.
-# O PowerShell retorna ao prompt automaticamente, sem ENTER extra.
+$reportSaved = $false
+$report = $null
+$discordFile = $null
 if ($null -ne $folder) {
     try {
         $prefix = 'LM-T1-SYSTEM-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $script:Session
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.11.0',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.12.0',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -1560,7 +1611,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.11.0**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.12.0**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
@@ -1569,6 +1620,7 @@ if ($null -ne $folder) {
             'Resultado observacional: revisao humana, sem prova de cheats.'
         )
         $discordLines | Set-Content -LiteralPath $discordFile -Encoding UTF8 -ErrorAction Stop
+        $reportSaved = $true
 
         if (-not $NoHistory -and $script:Stats.ProcessCount -ge 0) {
             # Aggregate counts only: no file names, command lines, paths, or user identifiers.
@@ -1585,5 +1637,20 @@ if ($null -ne $folder) {
         }
     } catch { Say ('  Falha ao salvar relatorios: ' + $_.Exception.Message) Yellow }
 } else { Say '  Nao foi possivel salvar relatorios nesta execucao.' Yellow }
-# Sem segunda pausa final: volta ao prompt original do PowerShell.
-
+Say ''
+Say '  +------------------------------------------------------------------+' DarkCyan
+Say '  |                 ETAPA 5 / 5: RELATORIO FINAL                     |' Cyan
+Say '  +------------------------------------------------------------------+' DarkCyan
+Say ('  RESUMO | OK: {0} | REVISAO: {1} | INFO: {2}' -f $ok,$review,$info) White
+if ($reportSaved) {
+    Say '  Relatorios salvos com sucesso:' Green
+    Say ('  TXT: ' + $report) Gray
+    Say ('  DISCORD: ' + $discordFile) Gray
+} else {
+    Say '  AVISO: nao foi possivel confirmar os dois relatorios locais.' Yellow
+}
+Say ''
+Say '  VERIFICACAO ENCERRADA. As 5 etapas foram concluidas.' Cyan
+Say '  Voce pode fechar o PowerShell no X ou digitar exit.' Gray
+Say '  Nenhum resultado confirma presenca ou ausencia de cheats.' DarkGray
+# Nao pede ENTER extra; volta ao prompt original sem fechar a sessao do jogador.
