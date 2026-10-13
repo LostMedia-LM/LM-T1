@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.5
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.5.1
 Public, read-only Windows security and process audit.
 No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
@@ -62,7 +62,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.5  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.5.1  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -120,7 +120,8 @@ function Open-LMVisualInspector {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
         Add-Type -AssemblyName System.Drawing -ErrorAction Stop
     } catch {
-        Check 'Janela visual' 'INFO' 'Windows Forms indisponivel; inspecao visual nao iniciada.'
+        Say ('  Windows Forms nao abriu: ' + $_.Exception.GetType().Name) Yellow
+        Check 'Janela visual' 'INFO' ('Windows Forms nao abriu: ' + $_.Exception.GetType().Name + '.')
         return
     }
 
@@ -276,7 +277,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5.1'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1130,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
@@ -304,7 +305,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5'
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5.1'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -576,6 +577,9 @@ Write-LMSection '04' 'Processos e assinaturas'
 try {
     $runningProcesses = @(Get-Process -ErrorAction Stop)
     $script:Stats.ProcessCount = $runningProcesses.Count
+    # A janela pode funcionar mesmo que a etapa de assinaturas falhe depois.
+    $script:GuiProcesses = @($runningProcesses)
+    $script:GuiReady = $true
     Check 'Processos ativos' 'INFO' ([string]$runningProcesses.Count + ' processos no momento da consulta.')
     $roblox = @($runningProcesses | Where-Object { $_.ProcessName -eq 'RobloxPlayerBeta' })
     $script:Stats.RobloxRunning = ($roblox.Count -gt 0)
@@ -658,7 +662,13 @@ try {
         if ($reviewLocal.Count -gt 25) { Say ('  ... e mais ' + ($reviewLocal.Count - 25) + ' itens.') DarkGray }
     }
 } catch {
-    Check 'Processos' 'INFO' ('Falha de consulta: ' + $_.Exception.GetType().Name + '. Verificacao parcial.')
+    # Registrar o erro tecnico sem incluir caminhos, nomes de programas ou dados pessoais.
+    $errType = $_.Exception.GetType().Name
+    $errLine = [int]$_.InvocationInfo.ScriptLineNumber
+    Check 'Processos' 'INFO' ("Leitura parcial: $errType na linha $errLine. Painel visual ainda disponivel.")
+    if ($script:Stats.ProcessCount -ge 0 -and $script:Stats.Inspected -eq 0) {
+        Check 'Assinaturas verificadas' 'INFO' 'Analise interrompida; nao foi possivel concluir a verificacao das assinaturas.'
+    }
 }
 
 Write-LMProgress 85 'Processos e assinaturas consultados'
@@ -721,10 +731,10 @@ Say '  +------------------------------------------------------------------+' Dar
 Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
 Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5') DarkGray
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5.1') DarkGray
 Say ''
 # Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
-$highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas')
+$highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas','Processos')
 foreach ($entry in $script:Checks) {
     if ($entry.State -eq 'INFO' -and $highlightInfo -notcontains $entry.Label) { continue }
     $col = switch ($entry.State) { 'OK' { 'Green' } 'REVIEW' { 'Yellow' } default { 'Gray' } }
@@ -740,18 +750,26 @@ else { Say '  Nenhum alerta nesta consulta; isso nao comprova ausencia de cheats
 Say '  A lista completa sera salva em Documentos\MVS-Lost-Media-T1.' DarkGray
 Say '  Nenhuma consulta garante ausencia ou presenca de cheats.' DarkGray
 Say ''
-if (-not $NoViewer -and $script:GuiReady) {
+if (-not $NoViewer) {
+    # Inspecao visual independente do sucesso da verificacao de assinaturas.
+    # Caso a lista inicial esteja vazia, uma nova leitura local e tentada.
+    if (@($script:GuiProcesses).Count -eq 0) {
+        try {
+            $script:GuiProcesses = @(Get-Process -ErrorAction Stop)
+            $script:GuiReady = $true
+        } catch {
+            Check 'Processos do painel' 'INFO' 'Nova leitura indisponivel; outras abas ainda podem funcionar.'
+        }
+    }
     if (-not $NoPause) { [void](Read-Host '  Pressione ENTER para abrir o painel visual') }
-    # ETAPA 3 / 3: painel visual, somente depois do ENTER.
+    # ETAPA 3 / 3: tentar a janela mesmo se alguma verificacao anterior falhou.
     Clear-Host
     Say '  MVS LOST MEDIA | Abrindo painel visual...' Cyan
     $script:QuietAudit = $true
     Open-LMVisualInspector
     $script:QuietAudit = $false
-} elseif ($NoViewer) {
-    Say '  Painel visual omitido por -NoViewer.' DarkGray
 } else {
-    Say '  Painel visual indisponivel neste ambiente.' Yellow
+    Say '  Painel visual omitido por -NoViewer.' DarkGray
 }
 # After the visual inspection, its observations are included in both reports.
 $ok = @($script:Checks | Where-Object { $_.State -eq 'OK' }).Count
@@ -765,7 +783,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5.1',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -777,7 +795,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5.1**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
