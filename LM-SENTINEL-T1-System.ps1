@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.8.0
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.9.0
 Public, read-only Windows security and process audit.
 Investigation tab shows only initial executable sample and Roblox, not injected code.
 Defender history counts are limited and cannot establish a clean/compromised machine.
@@ -56,6 +56,12 @@ $script:TimelineSource = 'Nenhuma fonte de eventos disponivel.'
 $script:AccessSource = 'Sysmon indisponivel ou sem eventos de interesse.'
 $script:EventWindowMinutes = 45
 $script:EventReadLimit = 250
+# Dados resumidos em memoria, sem enderecos de rede ou linhas de comando.
+$script:RecentRows = @()
+$script:NetworkRows = @()
+$script:CoverageRows = @()
+$script:NetworkSource = 'Consulta ainda nao executada.'
+$script:ActivitySource = 'Consulta ainda nao executada.'
 
 $script:Stats = [ordered]@{
     ProcessCount = -1
@@ -84,7 +90,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.8.0  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.9.0  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -247,6 +253,92 @@ function Invoke-LMEventAudit {
     Check 'Eventos de processos' 'INFO' ("$($script:TimelineRows.Count) eventos recentes para consulta visual; fonte: $script:TimelineSource Limite de $script:EventReadLimit eventos por consulta.")
     Check 'Eventos relacionados ao Roblox' 'INFO' ("$($script:AccessRows.Count) eventos Sysmon 8/10 observados na amostra. Fonte: $script:AccessSource")
     Check 'Relacoes de processos' 'INFO' ("$($script:ParentRows.Count) processos com PID pai na leitura atual; PIDs podem ser reutilizados.")
+}
+
+function Get-LMRecentProcessRows {
+    # Somente processos ativos com data de inicio acessivel, janela de 60 minutos.
+    # Nao coleta argumentos de linha de comando nem historico de arquivos.
+    $entries = New-Object 'System.Collections.Generic.List[object]'
+    $now = Get-Date
+    try {
+        $ps = @(Get-Process -ErrorAction Stop)
+        foreach ($proc in $ps) {
+            $start = $null
+            try { $start = [datetime]$proc.StartTime } catch { continue }
+            if ($start -lt $now.AddMinutes(-60) -or $start -gt $now.AddMinutes(5)) { continue }
+            $mins = [int][Math]::Max(0, [Math]::Floor(($now-$start).TotalMinutes))
+            [void]$entries.Add([pscustomobject]@{
+                Inicio=$start.ToString('HH:mm:ss')
+                Processo=[string]$proc.ProcessName
+                PID=[string]$proc.Id
+                Minutos=$mins.ToString()
+                Nota='Ativo no instante da consulta'
+            })
+        }
+    } catch { }
+    return @($entries.ToArray() | Sort-Object Inicio -Descending | Select-Object -First 100)
+}
+
+function Get-LMNetworkSummaryRows {
+    # Resumo de conexoes TCP ESTABLISHED, sem IP, DNS, portas ou URLs.
+    # Nao cria conexoes: somente consulta o sistema local.
+    $groups = @{}
+    $out = New-Object 'System.Collections.Generic.List[object]'
+    try {
+        $procLookup = @{}
+        foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
+            $procLookup[[string]$proc.Id] = [string]$proc.ProcessName
+        }
+        foreach ($conn in @(Get-NetTCPConnection -State Established -ErrorAction Stop)) {
+            $pidKey = [string]$conn.OwningProcess
+            if (-not $groups.ContainsKey($pidKey)) { $groups[$pidKey] = 0 }
+            $groups[$pidKey]++
+        }
+        foreach ($key in $groups.Keys) {
+            $name = if ($procLookup.ContainsKey($key)) { $procLookup[$key] } else { 'Nao identificado' }
+            [void]$out.Add([pscustomobject]@{
+                Processo = $name
+                PID = $key
+                TCP_ativas = [string]$groups[$key]
+                Nota = 'Conexoes comuns nao indicam cheat'
+            })
+        }
+        $script:NetworkSource = 'Conexoes TCP Established por PID; sem destinos ou portas.'
+    } catch {
+        $script:NetworkSource = 'Consulta de conexoes indisponivel (' + $_.Exception.GetType().Name + ').'
+    }
+    return @($out.ToArray() | Sort-Object { [int]$_.TCP_ativas } -Descending | Select-Object -First 100)
+}
+
+function Invoke-LMExtraAudit {
+    # Cobertura explicita: falta de logs nao conta como equipamento aprovado.
+    $script:RecentRows = @(Get-LMRecentProcessRows)
+    $script:ActivitySource = 'Processos ainda abertos, iniciados nos ultimos 60 minutos.'
+    $script:NetworkRows = @(Get-LMNetworkSummaryRows)
+    $cover = New-Object 'System.Collections.Generic.List[object]'
+    $sysmon = 'Nao disponivel'
+    try {
+        $syslog = Get-WinEvent -ListLog 'Microsoft-Windows-Sysmon/Operational' -ErrorAction Stop
+        if ($syslog.IsEnabled) { $sysmon = 'Log ativo; eventos dependem de filtros' }
+        else { $sysmon = 'Log desabilitado' }
+    } catch { $sysmon = 'Nao encontrado ou sem acesso' }
+    [void]$cover.Add([pscustomobject]@{ Fonte='Sysmon'; Estado=$sysmon; Limite='Sem Sysmon, nao ha IDs 8/10' })
+    $security = 'Nao disponivel'
+    try {
+        $seclog = Get-WinEvent -ListLog Security -ErrorAction Stop
+        if ($seclog.IsEnabled) { $security = 'Log ativo; 4688 depende de auditoria' }
+        else { $security = 'Log desabilitado' }
+    } catch { $security = 'Sem permissao ou consulta indisponivel' }
+    [void]$cover.Add([pscustomobject]@{ Fonte='Security / 4688'; Estado=$security; Limite='Log ativo nao garante eventos 4688' })
+    [void]$cover.Add([pscustomobject]@{ Fonte='Linha do tempo'; Estado=[string]$script:TimelineSource; Limite='Ultimos 45 min, ate 250 eventos' })
+    [void]$cover.Add([pscustomobject]@{ Fonte='Acesso ao Roblox'; Estado=[string]$script:AccessSource; Limite='ID 10 nao prova leitura de memoria' })
+    [void]$cover.Add([pscustomobject]@{ Fonte='Atividade'; Estado=[string]$script:ActivitySource; Limite='Somente processos ainda abertos' })
+    [void]$cover.Add([pscustomobject]@{ Fonte='Rede'; Estado=[string]$script:NetworkSource; Limite='Sem IP, DNS, portas ou conteudo' })
+    [void]$cover.Add([pscustomobject]@{ Fonte='Assinaturas'; Estado=([string]$script:Stats.Inspected + ' executaveis analisados'); Limite='Assinatura valida nao prova ausencia de cheat' })
+    $script:CoverageRows = $cover.ToArray()
+    Check 'Atividade recente' 'INFO' ("$($script:RecentRows.Count) processos ainda ativos iniciados nos ultimos 60 minutos; nao inclui processos ja encerrados.")
+    Check 'Rede TCP' 'INFO' ("$($script:NetworkRows.Count) processos com conexoes TCP ativas nesta consulta; nenhum destino coletado. $script:NetworkSource")
+    Check 'Cobertura de auditoria' 'INFO' 'Ver aba COBERTURA para fontes presentes, ausentes e limites; falta de dados nao significa aprovacao.'
 }
 
 function Open-LMVisualInspector {
@@ -541,7 +633,7 @@ function Open-LMVisualInspector {
         }
 
         $script:GuiDriverSignaturesChecked = 0
-        $categories = @('PROCESSOS','ROBLOX','EVENTOS','ACESSOS','PAIS','INVESTIGACAO','DEFENDER','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO','INFORMACOES')
+        $categories = @('PROCESSOS','ROBLOX','ATIVIDADE','REDE','COBERTURA','EVENTOS','ACESSOS','PAIS','INVESTIGACAO','DEFENDER','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO','INFORMACOES')
         $script:Gui23 = @{
             Active = 'PROCESSOS'
             Page = 0
@@ -552,6 +644,9 @@ function Open-LMVisualInspector {
             Columns = @{
                 PROCESSOS = @('Processo','PID','RAM_MB','Assinatura')
                 ROBLOX = @('Tipo','Processo','PID','Assinatura','Observacao')
+                ATIVIDADE = @('Inicio','Processo','PID','Minutos','Nota')
+                REDE = @('Processo','PID','TCP_ativas','Nota')
+                COBERTURA = @('Fonte','Estado','Limite')
                 EVENTOS = @('Hora','Fonte','Processo','Pai')
                 ACESSOS = @('Hora','Evento','Origem','Destino','Nota')
                 PAIS = @('Processo','PID','Pai','PID_Pai')
@@ -567,6 +662,9 @@ function Open-LMVisualInspector {
         foreach ($key in $categories) { $script:Gui23.Visited[$key] = @{} }
         $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items $script:GuiProcesses)
         $script:Gui23.Rows['ROBLOX'] = @(Get-LMRobloxRows -Items $script:GuiProcesses)
+        $script:Gui23.Rows['ATIVIDADE'] = @($script:RecentRows)
+        $script:Gui23.Rows['REDE'] = @($script:NetworkRows)
+        $script:Gui23.Rows['COBERTURA'] = @($script:CoverageRows)
         $script:Gui23.Rows['EVENTOS'] = @($script:TimelineRows)
         $script:Gui23.Rows['ACESSOS'] = @($script:AccessRows)
         $script:Gui23.Rows['PAIS'] = @($script:ParentRows)
@@ -589,7 +687,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.8.0'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.9.0'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1260,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1160,620)
@@ -617,7 +715,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  ROBLOX / EVENTOS / ACESSOS / INVESTIGACAO  /  BUILD 2.8.0'
+        $subtitle.Text = 'SYSTEM CHECK / ROBLOX / ATIVIDADE / REDE / COBERTURA / BUILD 2.9.0'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -649,6 +747,7 @@ function Open-LMVisualInspector {
 
         $tabs = New-Object System.Windows.Forms.TabControl
         $tabs.Dock = 'Fill'
+        $tabs.Multiline = $true
         $tabs.Font = New-Object System.Drawing.Font('Segoe UI',9,[System.Drawing.FontStyle]::Bold)
         $layout.Controls.Add($tabs,0,2)
         $grids = @{}
@@ -668,6 +767,9 @@ function Open-LMVisualInspector {
                     'Sem assinatura na amostra: ' + $script:Stats.Unsigned + [Environment]::NewLine +
                     'Drivers consultados: ' + $script:GuiDriverSignaturesChecked + ' arquivos (amostra)' + [Environment]::NewLine +
                     'Defender: ' + $script:DefenderSummary + [Environment]::NewLine +
+                    'Atividade: ' + $script:ActivitySource + [Environment]::NewLine +
+                    'Rede: ' + $script:NetworkSource + [Environment]::NewLine +
+                    'Cobertura: ausente nao quer dizer aprovado.' + [Environment]::NewLine +
                     'Historico: ' + $script:TimelineSource + [Environment]::NewLine +
                     'Acessos: ' + $script:AccessSource + [Environment]::NewLine +
                     'Ultimos ' + $script:EventWindowMinutes + ' minutos; amostragem limitada.' + [Environment]::NewLine + [Environment]::NewLine +
@@ -865,7 +967,7 @@ function Open-LMVisualInspector {
             }
             $controls.Prev.Enabled = ($state.Page -gt 0)
             $controls.Next.Enabled = ($state.Page -lt ($pages - 1))
-            $controls.Refresh.Enabled = ($category -eq 'PROCESSOS' -or $category -eq 'SERVICOS' -or $category -eq 'ROBLOX')
+            $controls.Refresh.Enabled = ($category -eq 'PROCESSOS' -or $category -eq 'SERVICOS' -or $category -eq 'ROBLOX' -or $category -eq 'ATIVIDADE' -or $category -eq 'REDE')
         }
         $prev.Add_Click({ $script:Gui23.Page--; & $script:Gui23Render })
         $next.Add_Click({ $script:Gui23.Page++; & $script:Gui23Render })
@@ -887,6 +989,10 @@ function Open-LMVisualInspector {
                 $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items $fresh)
                 $script:Gui23.Rows['ROBLOX'] = @(Get-LMRobloxRows -Items $fresh)
                 $script:Gui23.Rows['SERVICOS'] = @(Get-LMServiceRows)
+                $script:Gui23.Rows['ATIVIDADE'] = @(Get-LMRecentProcessRows)
+                $script:Gui23.Rows['REDE'] = @(Get-LMNetworkSummaryRows)
+                $script:Gui23.Visited['ATIVIDADE'] = @{}
+                $script:Gui23.Visited['REDE'] = @{}
                 $script:Gui23.Visited['PROCESSOS'] = @{}
                 $script:Gui23.Visited['ROBLOX'] = @{}
                 $script:Gui23.Visited['SERVICOS'] = @{}
@@ -900,7 +1006,7 @@ function Open-LMVisualInspector {
         # The visual panel is shown after the console summary and ENTER.
         [void]$window.ShowDialog()
         $visitedSummary = @()
-        foreach ($cat in @('PROCESSOS','ROBLOX','EVENTOS','ACESSOS','PAIS','INVESTIGACAO','DEFENDER','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
+        foreach ($cat in @('PROCESSOS','ROBLOX','ATIVIDADE','REDE','COBERTURA','EVENTOS','ACESSOS','PAIS','INVESTIGACAO','DEFENDER','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
             $visitedSummary += ($cat + '=' + [string]$script:Gui23.Visited[$cat].Count)
         }
         Check 'Inspecao visual' 'INFO' ('Janela encerrada. Paginas visitadas (nao comprova gravacao): ' + ($visitedSummary -join ', ') + '.')
@@ -1108,6 +1214,8 @@ try { Invoke-LMEventAudit } catch {
     Check 'Telemetria Windows' 'INFO' 'Consulta parcial de eventos; nenhuma mudanca feita no sistema.'
 }
 Write-LMProgress 90 'Eventos opcionais consultados'
+try { Invoke-LMExtraAudit } catch { Check 'Consultas complementares' 'INFO' 'Atividade, rede ou cobertura indisponiveis nesta execucao.' }
+Write-LMProgress 91 'Atividade, rede e cobertura consultadas'
 Write-LMSection '05' 'Comparacao entre execucoes' 
 $folder = $null
 $previousSnapshot = $null
@@ -1167,7 +1275,7 @@ Say '  +------------------------------------------------------------------+' Dar
 Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
 Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.8.0') DarkGray
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.9.0') DarkGray
 Say ''
 # Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
 $highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas','Processos')
@@ -1183,7 +1291,7 @@ Say ''
 Say (('  RESUMO | OK: {0} | REVISAO: {1} | INFO: {2}' -f $ok,$review,$info)) Cyan
 if ($review -gt 0) { Say '  Existem itens para revisao humana; nao ha veredito automatico.' Yellow }
 else { Say '  Nenhum alerta nesta consulta; isso nao comprova ausencia de cheats.' Green }
-Say '  Proxima etapa: painel com ROBLOX, EVENTOS, ACESSOS e INVESTIGACAO.'
+Say '  Proxima etapa: painel com ROBLOX, ATIVIDADE, REDE e COBERTURA.'
 Say '  A lista completa sera salva em Documentos\MVS-Lost-Media-T1.' DarkGray
 Say '  Nenhuma consulta garante ausencia ou presenca de cheats.' DarkGray
 Say ''
@@ -1225,7 +1333,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.8.0',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.9.0',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -1238,7 +1346,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.8.0**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.9.0**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
