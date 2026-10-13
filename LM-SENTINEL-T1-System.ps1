@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.3
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.4
 Public, read-only Windows security and process audit.
 No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
@@ -12,7 +12,7 @@ Options:
   -MaxSignatureChecks 100  Maximum distinct readable executables checked (20..200).
   -NoHistory               Does not read or write the previous-run aggregate snapshot.
   -NoViewer                Skips the read-only visual inspection window.
-  -NoPause                 Does not prompt at the end.
+  -NoPause                 Skips the ENTER prompt before the visual panel and at the end.
 #>
 [CmdletBinding()]
 param(
@@ -32,6 +32,8 @@ $script:CheckIndex = 0
 $script:GuiProcesses = @()
 $script:GuiSignatureMap = @{}
 $script:GuiReady = $false
+$script:QuietAudit = $true
+$script:LastProgressLength = 0
 $script:GuiReviewItems = @()
 $script:Stats = [ordered]@{
     ProcessCount = -1
@@ -47,7 +49,39 @@ $script:Stats = [ordered]@{
 function Say([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Message -ForegroundColor $Color
 }
+function Write-LMIntro {
+    Clear-Host
+    Say ''
+    Say '  +------------------------------------------------------------------+' DarkCyan
+    Say '  |                                                                  |' DarkCyan
+    Say '  |             MVS LOST MEDIA  |  T1 RECORDING POLICY               |' Cyan
+    Say '  |                                                                  |' DarkCyan
+    Say '  |                       _       __  __                             |' Cyan
+    Say '  |                      | |     |  \/  |                            |' Cyan
+    Say '  |                      | |     | |\/| |                            |' Cyan
+    Say '  |                      | |___  | |  | |                            |' Cyan
+    Say '  |                      |_____| |_|  |_|                            |' Cyan
+    Say '  |                                                                  |' DarkCyan
+    Say '  |     SYSTEM CHECK  /  BUILD 2.4  /  SOMENTE LEITURA               |' White
+    Say '  |                                                                  |' DarkCyan
+    Say '  +------------------------------------------------------------------+' DarkCyan
+    Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
+    Say ('  Sessao: ' + $script:Session + ' | ' + $script:Started) DarkGray
+    Say '  Nenhum arquivo pessoal e enviado. Nenhum alerta prova cheats.' DarkGray
+    Say ''
+    Say '  VERIFICANDO SEU PC' Cyan
+}
+function Write-LMProgress([int]$Percent,[string]$Step) {
+    $count = [int][Math]::Floor(([Math]::Max(0,[Math]::Min(100,$Percent)) * 26) / 100)
+    $bar = ('#' * $count) + ('.' * (26-$count))
+    $line = ('  Verification [{0}] {1,3}%  {2}' -f $bar,$Percent,$Step)
+    $padded = $line.PadRight([Math]::Max($script:LastProgressLength,$line.Length))
+    $script:LastProgressLength = $padded.Length
+    Write-Host ("`r" + $padded) -NoNewline -ForegroundColor Cyan
+    if ($Percent -ge 100) { Write-Host '' }
+}
 function Write-LMSection([string]$Id,[string]$Heading) {
+    if ($script:QuietAudit) { return }
     Write-Host ''
     Say ('  [' + $Id + ']  ' + $Heading.ToUpperInvariant()) Cyan
     Say '  --------------------------------------------------------------' DarkGray
@@ -59,9 +93,11 @@ function Check([string]$Label,[string]$State,[string]$Explanation) {
         'REVIEW' { [ConsoleColor]::Yellow }
         default  { [ConsoleColor]::DarkGray }
     }
-    Write-Host ('  {0:00}  ' -f $script:CheckIndex) -NoNewline -ForegroundColor DarkGray
-    Write-Host ('[{0,-6}] ' -f $State) -NoNewline -ForegroundColor $color
-    Write-Host ($Label + ' | ' + $Explanation)
+    if (-not $script:QuietAudit) {
+        Write-Host ('  {0:00}  ' -f $script:CheckIndex) -NoNewline -ForegroundColor DarkGray
+        Write-Host ('[{0,-6}] ' -f $State) -NoNewline -ForegroundColor $color
+        Write-Host ($Label + ' | ' + $Explanation)
+    }
     [void]$script:Checks.Add([pscustomobject]@{
         Label=$Label; State=$State; Explanation=$Explanation
     })
@@ -240,7 +276,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.3'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.4'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1130,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
@@ -268,7 +304,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.3'
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.4'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -465,7 +501,7 @@ function Open-LMVisualInspector {
             }
         })
         & $script:Gui23Render
-        Say '  Inspector visual aberto. Passe pelas abas e conclua a verificacao.' Cyan
+        # The visual panel is shown after the console summary and ENTER.
         [void]$window.ShowDialog()
         $visitedSummary = @()
         foreach ($cat in @('PROCESSOS','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
@@ -484,18 +520,8 @@ function Open-LMVisualInspector {
     }
 }
 
-Say ''
-Say '  +------------------------------------------------------------------+' DarkCyan
-Say '  |                                                                  |' DarkCyan
-Say '  |  MVS LOST MEDIA                                    TIER 1 / 01   |' Cyan
-Say '  |                                                                  |' DarkCyan
-Say '  |  SYSTEM CHECK                                                    |' White
-Say '  |  Processos  /  Seguranca Windows  /  Assinaturas digitais        |' DarkCyan
-Say '  |                                                                  |' DarkCyan
-Say '  |  BUILD 2.3                 CONSULTAS SOMENTE LEITURA             |' Cyan
-Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  SESSAO ' + $script:Session + '    ' + $script:Started) Gray
-Say '  Sem envio de dados | Sem veredito automatico | Relatorios locais' DarkGray
+Write-LMIntro
+Write-LMProgress 0 'Preparando a verificacao...'
 Write-LMSection '01' 'Identificacao do ambiente'
 try {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -509,6 +535,7 @@ try {
     Check 'Windows' 'INFO' ('Build ' + [string]$os.BuildNumber)
 } catch { Check 'Windows' 'INFO' 'Build indisponivel.' }
 
+Write-LMProgress 15 'Ambiente consultado'
 Write-LMSection '02' 'Protecao do dispositivo'
 try {
     $mp = Get-MpComputerStatus -ErrorAction Stop
@@ -528,6 +555,7 @@ try {
     }
 } catch { Check 'Firewall' 'INFO' 'Nao foi possivel consultar os perfis.' }
 
+Write-LMProgress 35 'Defender e firewall consultados'
 Write-LMSection '03' 'Servicos e isolamento'
 foreach ($name in @('WinDefend','mpssvc','wscsvc')) {
     try {
@@ -543,6 +571,7 @@ try {
     else { Check 'Integridade de memoria' 'INFO' 'HVCI nao consta em execucao; isso nao e prova de cheat.' }
 } catch { Check 'Integridade de memoria' 'INFO' 'Consulta de Device Guard indisponivel.' }
 
+Write-LMProgress 52 'Servicos e isolamento consultados'
 Write-LMSection '04' 'Processos e assinaturas'
 try {
     $runningProcesses = @(Get-Process -ErrorAction Stop)
@@ -580,6 +609,11 @@ try {
         $status = SignatureStatus $loc
         $script:GuiSignatureMap[$loc] = $status
         $processed++
+        if ($processed -eq 1 -or ($processed % 10) -eq 0 -or $processed -eq [Math]::Min($locations.Count,$MaxSignatureChecks)) {
+            $fraction = [Math]::Max(1,[Math]::Min($locations.Count,$MaxSignatureChecks))
+            $pct = 58 + [int][Math]::Floor((26.0 * $processed)/$fraction)
+            Write-LMProgress $pct ('Assinaturas ' + $processed + '/' + $fraction)
+        }
         if ($status -eq 'Valid') { $valid++ }
         elseif ($status -eq 'NotSigned') { $unsigned++ }
         else { $other++ }
@@ -627,11 +661,7 @@ try {
     Check 'Processos' 'INFO' ('Falha de consulta: ' + $_.Exception.GetType().Name + '. Verificacao parcial.')
 }
 
-# Window is opened after the audit. This does not collect data in the background.
-if (-not $NoViewer -and $script:GuiReady) {
-    Open-LMVisualInspector
-}
-
+Write-LMProgress 85 'Processos e assinaturas consultados'
 Write-LMSection '05' 'Comparacao entre execucoes'
 $folder = $null
 $previousSnapshot = $null
@@ -672,30 +702,56 @@ if ($NoHistory) {
     } catch { Check 'Comparacao' 'INFO' 'Snapshot antigo incompativel; iniciando nova referencia.' }
 }
 
+Write-LMProgress 92 'Comparacao de execucoes concluida'
 Write-LMSection '06' 'Integridade e resumo'
 try {
     $hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256 -ErrorAction Stop).Hash
     Check 'SHA-256 deste arquivo' 'INFO' $hash
 } catch { Check 'SHA-256 deste arquivo' 'INFO' 'Nao foi possivel calcular.' }
 
+Write-LMProgress 100 'Consultas concluidas'
+$script:QuietAudit = $false
+Say ''
+Say '  +------------------------------------------------------------------+' DarkCyan
+Say '  |                 MVS LOST MEDIA | RESULTADOS                      |' Cyan
+Say '  +------------------------------------------------------------------+' DarkCyan
+foreach ($entry in $script:Checks) {
+    $col = switch ($entry.State) { 'OK' { 'Green' } 'REVIEW' { 'Yellow' } default { 'Gray' } }
+    Say ('  [{0,-6}] {1}: {2}' -f $entry.State,$entry.Label,$entry.Explanation) $col
+}
 $ok = @($script:Checks | Where-Object { $_.State -eq 'OK' }).Count
 $review = @($script:Checks | Where-Object { $_.State -eq 'REVIEW' }).Count
 $info = @($script:Checks | Where-Object { $_.State -eq 'INFO' }).Count
 Say ''
-Say '  +-----------------------------------------------------------------+' DarkCyan
-Say (('  |   OK  {0,-4}   REVISAO  {1,-4}   INFO  {2,-4}                  |' -f $ok,$review,$info)) White
-Say '  +-----------------------------------------------------------------+' DarkCyan
-if ($review -gt 0) { Say '  RESULTADO: HA ITENS PARA REVISAO HUMANA, NAO HA VEREDITO.' Yellow }
-else { Say '  RESULTADO: SEM ALERTAS NESTAS CONSULTAS, NAO HA VEREDITO.' Green }
-Say '  Nenhum resultado prova presenca ou ausencia de cheats.' DarkGray
-
+Say (('  RESUMO | OK: {0} | REVISAO: {1} | INFO: {2}' -f $ok,$review,$info)) Cyan
+if ($review -gt 0) { Say '  Existem itens para revisao humana; nao ha veredito automatico.' Yellow }
+else { Say '  Nenhum alerta nesta consulta; isso nao comprova ausencia de cheats.' Green }
+Say '  Todos os resultados dependem das consultas disponiveis nesta sessao.' DarkGray
+Say ''
+if (-not $NoViewer -and $script:GuiReady) {
+    if (-not $NoPause) { [void](Read-Host '  Pressione ENTER para abrir o painel visual') }
+    Say '  Abrindo painel de inspecao...' Cyan
+    $script:QuietAudit = $true
+    Open-LMVisualInspector
+    $script:QuietAudit = $false
+} elseif ($NoViewer) {
+    Say '  Painel visual omitido por -NoViewer.' DarkGray
+} else {
+    Say '  Painel visual indisponivel neste ambiente.' Yellow
+}
+# After the visual inspection, its observations are included in both reports.
+$ok = @($script:Checks | Where-Object { $_.State -eq 'OK' }).Count
+$review = @($script:Checks | Where-Object { $_.State -eq 'REVIEW' }).Count
+$info = @($script:Checks | Where-Object { $_.State -eq 'INFO' }).Count
+Write-Host ''
+Say '  [RELATORIO FINAL]  Preparando arquivos locais...' Cyan
 if ($null -ne $folder) {
     try {
         $prefix = 'LM-T1-SYSTEM-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $script:Session
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.3',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.4',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -707,7 +763,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.3**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.4**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
@@ -734,5 +790,5 @@ if ($null -ne $folder) {
         }
     } catch { Say ('  Falha ao salvar relatorios: ' + $_.Exception.Message) Yellow }
 } else { Say '  Nao foi possivel salvar relatorios nesta execucao.' Yellow }
-Say '  ENCERRADO  |  MVS LOST MEDIA  |  T1 SYSTEM CHECK 2.3' DarkCyan
+Say '  ENCERRADO  |  MVS LOST MEDIA  |  T1 SYSTEM CHECK 2.4' DarkCyan
 if (-not $NoPause) { Write-Host ''; [void](Read-Host '  Pressione ENTER para fechar') }
