@@ -1,8 +1,8 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.2.1
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.3
 Public, read-only Windows security and process audit.
-No external connections, no automatic elevation, no Registry/system changes.
+No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
 Unsigned files or other observations are NOT proof of cheating.
 
@@ -11,7 +11,7 @@ Options:
                            Names/paths are NEVER saved to reports.
   -MaxSignatureChecks 100  Maximum distinct readable executables checked (20..200).
   -NoHistory               Does not read or write the previous-run aggregate snapshot.
-  -NoViewer                Skips the read-only process/service inspection window.
+  -NoViewer                Skips the read-only visual inspection window.
   -NoPause                 Does not prompt at the end.
 #>
 [CmdletBinding()]
@@ -32,6 +32,7 @@ $script:CheckIndex = 0
 $script:GuiProcesses = @()
 $script:GuiSignatureMap = @{}
 $script:GuiReady = $false
+$script:GuiReviewItems = @()
 $script:Stats = [ordered]@{
     ProcessCount = -1
     RobloxRunning = $false
@@ -46,7 +47,7 @@ $script:Stats = [ordered]@{
 function Say([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Message -ForegroundColor $Color
 }
-function Write-SentinelSection([string]$Id,[string]$Heading) {
+function Write-LMSection([string]$Id,[string]$Heading) {
     Write-Host ''
     Say ('  [' + $Id + ']  ' + $Heading.ToUpperInvariant()) Cyan
     Say '  --------------------------------------------------------------' DarkGray
@@ -77,57 +78,48 @@ function WinStatus([string]$Name, $Value) {
     else { Check $Name 'REVIEW' 'Estado desabilitado; exige verificacao de contexto.' }
 }
 
-function Open-SentinelViewer {
-    # Read-only, local GUI. Process names and PIDs are visible only on screen.
+function Open-LMVisualInspector {
+    # Local, read-only WinForms inspection. Detailed names are not written to reports.
     try {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
         Add-Type -AssemblyName System.Drawing -ErrorAction Stop
     } catch {
-        Check 'Janela de processos' 'INFO' 'Windows Forms indisponivel; lista visual nao foi aberta.'
+        Check 'Janela visual' 'INFO' 'Windows Forms indisponivel; inspecao visual nao iniciada.'
         return
     }
 
+    $window = $null
     try {
-        $script:Gui = @{
-            Page = 0
-            PageSize = 15
-            Search = ''
-            Tab = 0
-            Processes = @()
-            Services = @()
-        }
-
-        function script:Get-SentinelProcessRows {
+        function script:Get-LMProcessRows {
             param([object[]]$Items)
-            $rows = New-Object 'System.Collections.Generic.List[object]'
-            foreach ($p in $Items) {
+            $out = New-Object 'System.Collections.Generic.List[object]'
+            foreach ($proc in $Items) {
                 $path = $null
-                try { $path = $p.Path } catch { }
-                $sig = 'Nao verificada'
-                if ([string]::IsNullOrWhiteSpace($path)) {
-                    $sig = 'Caminho indisponivel'
-                } elseif ($script:GuiSignatureMap.ContainsKey($path)) {
-                    $sig = switch ($script:GuiSignatureMap[$path]) {
+                try { $path = $proc.Path } catch { }
+                $signature = 'Nao verificada'
+                if ([string]::IsNullOrWhiteSpace($path)) { $signature = 'Caminho indisponivel' }
+                elseif ($script:GuiSignatureMap.ContainsKey($path)) {
+                    $signature = switch ($script:GuiSignatureMap[$path]) {
                         'Valid' { 'Valida' }
                         'NotSigned' { 'Sem assinatura' }
-                        default { 'Outra / indisponivel' }
+                        default { 'Outro estado' }
                     }
                 }
                 $ram = '-'
-                try { $ram = [string][math]::Round($p.WorkingSet64 / 1MB) } catch { }
-                [void]$rows.Add([pscustomobject]@{
-                    Nome = [string]$p.ProcessName
-                    PID = [int]$p.Id
+                try { $ram = [string][Math]::Round($proc.WorkingSet64 / 1MB) } catch { }
+                [void]$out.Add([pscustomobject]@{
+                    Processo = [string]$proc.ProcessName
+                    PID = [string]$proc.Id
                     RAM_MB = $ram
-                    Assinatura = $sig
+                    Assinatura = $signature
                 })
             }
-            return @($rows | Sort-Object Nome, PID)
+            return @($out | Sort-Object Processo, PID)
         }
 
-        function script:Get-SentinelServiceRows {
+        function script:Get-LMServiceRows {
             try {
-                return @(Get-Service -ErrorAction Stop | Sort-Object DisplayName | ForEach-Object {
+                return @(Get-Service -ErrorAction Stop | Sort-Object Name | ForEach-Object {
                     [pscustomobject]@{
                         Servico = [string]$_.Name
                         Descricao = [string]$_.DisplayName
@@ -137,270 +129,358 @@ function Open-SentinelViewer {
             } catch { return @() }
         }
 
-        $script:Gui.Processes = @(Get-SentinelProcessRows -Items $script:GuiProcesses)
-        $script:Gui.Services = @(Get-SentinelServiceRows)
+        function script:Get-LMDriverRows {
+            # Win32_SystemDriver reports service/driver state. Some drivers use catalog signatures:
+            # Get-AuthenticodeSignature on a .sys file alone is not conclusive.
+            $out = New-Object 'System.Collections.Generic.List[object]'
+            $checked = 0
+            try {
+                $items = @(Get-CimInstance -ClassName Win32_SystemDriver -ErrorAction Stop | Sort-Object Name)
+                foreach ($driver in $items) {
+                    $signature = 'Nao verificada'
+                    $path = [string]$driver.PathName
+                    $location = $null
+                    if ($path -match '(?i)([a-z]:\\[^"\r\n]+?\.sys|\\SystemRoot\\[^"\r\n]+?\.sys|System32\\[^"\r\n]+?\.sys)') {
+                        $location = [string]$Matches[1]
+                        if ($location.StartsWith('\SystemRoot\', [StringComparison]::OrdinalIgnoreCase)) {
+                            $location = Join-Path $env:SystemRoot ($location.Substring(12))
+                        } elseif ($location.StartsWith('System32\', [StringComparison]::OrdinalIgnoreCase)) {
+                            $location = Join-Path $env:SystemRoot $location
+                        }
+                    }
+                    if ($checked -lt 60 -and $location -and [IO.File]::Exists($location)) {
+                        $checked++
+                        $signature = switch (SignatureStatus $location) {
+                            'Valid' { 'Valida' }
+                            'NotSigned' { 'Nao encontrada*' }
+                            default { 'Indisponivel*' }
+                        }
+                    }
+                    [void]$out.Add([pscustomobject]@{
+                        Driver = [string]$driver.Name
+                        Estado = [string]$driver.State
+                        Inicio = [string]$driver.StartMode
+                        Assinatura = $signature
+                    })
+                }
+            } catch { return @() }
+            $script:GuiDriverSignaturesChecked = $checked
+            return @($out)
+        }
 
-        $dark  = [System.Drawing.Color]::FromArgb(16,25,37)
-        $panel = [System.Drawing.Color]::FromArgb(25,38,54)
-        $cyan  = [System.Drawing.Color]::FromArgb(85,218,226)
-        $white = [System.Drawing.Color]::FromArgb(234,240,249)
-        $muted = [System.Drawing.Color]::FromArgb(158,175,194)
+        function script:Get-LMStartupRows {
+            try {
+                return @(Get-CimInstance Win32_StartupCommand -ErrorAction Stop | Sort-Object Name | ForEach-Object {
+                    $origin = [string]$_.Location
+                    $source = if ($origin -match '(?i)startup') { 'Pasta Inicializar' }
+                        elseif ($origin -match '(?i)HKLM|HKCU|registry|run') { 'Registro Windows' }
+                        else { 'Outra origem' }
+                    [pscustomobject]@{ Programa = [string]$_.Name; Origem = $source }
+                })
+            } catch { return @() }
+        }
+
+        function script:Get-LMReviewRows {
+            $out = New-Object 'System.Collections.Generic.List[object]'
+            foreach ($entry in $script:GuiReviewItems) {
+                $names = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+                foreach ($proc in $script:GuiProcesses) {
+                    try {
+                        if ($proc.Path -and [string]::Equals([string]$proc.Path, [string]$entry.Path, [StringComparison]::OrdinalIgnoreCase)) {
+                            [void]$names.Add([string]$proc.ProcessName)
+                        }
+                    } catch { }
+                }
+                $processNames = if ($names.Count -gt 0) { (@($names | Select-Object -First 3) -join ', ') } else { 'Indisponivel' }
+                $result = switch ([string]$entry.Signature) {
+                    'NotSigned' { 'Sem assinatura' }
+                    default { [string]$entry.Signature }
+                }
+                [void]$out.Add([pscustomobject]@{
+                    Arquivo = [string]$entry.File
+                    Processo = $processNames
+                    Situacao = $result
+                })
+            }
+            return @($out | Sort-Object Arquivo)
+        }
+
+        $script:GuiDriverSignaturesChecked = 0
+        $categories = @('PROCESSOS','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO','INFORMACOES')
+        $script:Gui23 = @{
+            Active = 'PROCESSOS'
+            Page = 0
+            PageSize = 15
+            Filter = ''
+            Categories = $categories
+            Rows = @{}
+            Columns = @{
+                PROCESSOS = @('Processo','PID','RAM_MB','Assinatura')
+                SERVICOS = @('Servico','Descricao','Estado')
+                DRIVERS = @('Driver','Estado','Inicio','Assinatura')
+                INICIALIZACAO = @('Programa','Origem')
+                REVISAO = @('Arquivo','Processo','Situacao')
+            }
+            Visited = @{}
+        }
+        foreach ($key in $categories) { $script:Gui23.Visited[$key] = @{} }
+        $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items $script:GuiProcesses)
+        $script:Gui23.Rows['SERVICOS'] = @(Get-LMServiceRows)
+        $script:Gui23.Rows['DRIVERS'] = @(Get-LMDriverRows)
+        $script:Gui23.Rows['INICIALIZACAO'] = @(Get-LMStartupRows)
+        $script:Gui23.Rows['REVISAO'] = @(Get-LMReviewRows)
+        Check 'Drivers' 'INFO' ("$(@($script:Gui23.Rows['DRIVERS']).Count) itens; $script:GuiDriverSignaturesChecked arquivos consultados (amostra nao conclusiva).")
+        Check 'Inicializacao' 'INFO' ("$(@($script:Gui23.Rows['INICIALIZACAO']).Count) entradas listadas na janela, sem comandos/caminhos nos relatorios.")
+        Check 'Itens para revisao visual' 'INFO' ("$(@($script:Gui23.Rows['REVISAO']).Count) arquivos da amostra de processos disponiveis na aba REVISAO.")
+
+        $dark = [System.Drawing.Color]::FromArgb(14,24,36)
+        $panel = [System.Drawing.Color]::FromArgb(23,37,54)
+        $cyan = [System.Drawing.Color]::FromArgb(96,220,233)
+        $white = [System.Drawing.Color]::FromArgb(231,240,249)
+        $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA | T1 - Inspecao de processos | BUILD 2.2.1'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.3'
         $window.StartPosition = 'CenterScreen'
-        $window.Size = New-Object System.Drawing.Size(1060,720)
-        $window.MinimumSize = New-Object System.Drawing.Size(1000,580)
+        $window.Size = New-Object System.Drawing.Size(1130,745)
+        $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
         $window.BackColor = $dark
         $window.ForeColor = $white
         $window.Font = New-Object System.Drawing.Font('Segoe UI',10)
 
-        $top = New-Object System.Windows.Forms.Panel
-        $top.Dock = 'Top'
-        $top.Height = 83
-        $top.BackColor = $dark
-
-
-        $title = New-Object System.Windows.Forms.Label
-        $title.Text = 'MVS LOST MEDIA   |   TIER 1'
-        $title.ForeColor = $cyan
-        $title.Font = New-Object System.Drawing.Font('Consolas',18,[System.Drawing.FontStyle]::Bold)
-        $title.Location = New-Object System.Drawing.Point(20,12)
-        $title.AutoSize = $true
-        $top.Controls.Add($title)
-
-        $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  INSPECAO VISUAL  /  BUILD 2.2.1  /  SEM ENVIO DE DADOS'
-        $subtitle.ForeColor = $muted
-        $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
-        $subtitle.Location = New-Object System.Drawing.Point(22,51)
-        $subtitle.AutoSize = $true
-        $top.Controls.Add($subtitle)
-
-        $bottom = New-Object System.Windows.Forms.Panel
-        $bottom.Dock = 'Bottom'
-        $bottom.Height = 105
-        $bottom.BackColor = $dark
-
-
-        $instruction = New-Object System.Windows.Forms.Label
-        $instruction.Text = 'Mostre cada pagina durante a gravacao. Nomes e PIDs nao sao gravados nos relatorios.'
-        $instruction.ForeColor = $muted
-        $instruction.Location = New-Object System.Drawing.Point(20,6)
-        $instruction.AutoSize = $true
-        $bottom.Controls.Add($instruction)
-
-        $back = New-Object System.Windows.Forms.Button
-        $back.Text = '<< Anterior'
-        $back.Location = New-Object System.Drawing.Point(20,36)
-        $back.Size = New-Object System.Drawing.Size(126,34)
-        $bottom.Controls.Add($back)
-
-        $forward = New-Object System.Windows.Forms.Button
-        $forward.Text = 'Proxima >>'
-        $forward.Location = New-Object System.Drawing.Point(159,36)
-        $forward.Size = New-Object System.Drawing.Size(126,34)
-        $bottom.Controls.Add($forward)
-
-        $pageInfo = New-Object System.Windows.Forms.Label
-        $pageInfo.Location = New-Object System.Drawing.Point(302,43)
-        $pageInfo.Size = New-Object System.Drawing.Size(258,26)
-        $pageInfo.ForeColor = $cyan
-        $pageInfo.Font = New-Object System.Drawing.Font('Consolas',11)
-        $bottom.Controls.Add($pageInfo)
-
-        $reload = New-Object System.Windows.Forms.Button
-        $reload.Text = 'Atualizar agora'
-        $reload.Location = New-Object System.Drawing.Point(580,36)
-        $reload.Size = New-Object System.Drawing.Size(152,34)
-        $bottom.Controls.Add($reload)
-
-        $close = New-Object System.Windows.Forms.Button
-        $close.Text = 'Concluir verificacao'
-        $close.Location = New-Object System.Drawing.Point(744,36)
-        $close.Size = New-Object System.Drawing.Size(190,34)
-        $close.Add_Click({ $script:GuiWindow.Close() })
-        $bottom.Controls.Add($close)
-
-        $tabs = New-Object System.Windows.Forms.TabControl
-        $tabs.Dock = 'Fill'
-        $tabs.Font = New-Object System.Drawing.Font('Segoe UI',10,[System.Drawing.FontStyle]::Bold)
-        # Table layout keeps the header, tabs and paging controls visible at any size.
         $layout = New-Object System.Windows.Forms.TableLayoutPanel
         $layout.Dock = 'Fill'
         $layout.ColumnCount = 1
-        $layout.RowCount = 3
-        $layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,83))) | Out-Null
-        $layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent,100))) | Out-Null
-        $layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,105))) | Out-Null
+        $layout.RowCount = 4
+        [void]$layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,92)))
+        [void]$layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,45)))
+        [void]$layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent,100)))
+        [void]$layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,112)))
         $window.Controls.Add($layout)
+
+        $top = New-Object System.Windows.Forms.Panel
+        $top.BackColor = $dark; $top.Dock = 'Fill'
+        $title = New-Object System.Windows.Forms.Label
+        $title.Text = 'MVS LOST MEDIA   /   TIER 1'
+        $title.ForeColor = $cyan
+        $title.Font = New-Object System.Drawing.Font('Consolas',20,[System.Drawing.FontStyle]::Bold)
+        $title.Location = New-Object System.Drawing.Point(20,10)
+        $title.AutoSize = $true
+        $top.Controls.Add($title)
+        $subtitle = New-Object System.Windows.Forms.Label
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.3'
+        $subtitle.ForeColor = $muted
+        $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
+        $subtitle.Location = New-Object System.Drawing.Point(23,55)
+        $subtitle.AutoSize = $true
+        $top.Controls.Add($subtitle)
         $layout.Controls.Add($top,0,0)
-        $layout.Controls.Add($tabs,0,1)
-        $layout.Controls.Add($bottom,0,2)
-        $script:GuiWindow = $window
-        $script:GuiTabs = $tabs
 
-        $tab1 = New-Object System.Windows.Forms.TabPage
-        $tab1.Text = 'PROCESSOS'
-        $tab1.BackColor = $panel
-        [void]$tabs.TabPages.Add($tab1)
-        $tab2 = New-Object System.Windows.Forms.TabPage
-        $tab2.Text = 'SERVICOS'
-        $tab2.BackColor = $panel
-        [void]$tabs.TabPages.Add($tab2)
-        $tab3 = New-Object System.Windows.Forms.TabPage
-        $tab3.Text = 'INFORMACOES'
-        $tab3.BackColor = $panel
-        [void]$tabs.TabPages.Add($tab3)
+        $filterPanel = New-Object System.Windows.Forms.Panel
+        $filterPanel.Dock = 'Fill'
+        $filterPanel.BackColor = $panel
+        $filterLabel = New-Object System.Windows.Forms.Label
+        $filterLabel.Text = 'Pesquisar (somente nesta aba):'
+        $filterLabel.Location = New-Object System.Drawing.Point(20,13)
+        $filterLabel.AutoSize = $true
+        $filterLabel.ForeColor = $white
+        $filterPanel.Controls.Add($filterLabel)
+        $filterBox = New-Object System.Windows.Forms.TextBox
+        $filterBox.Location = New-Object System.Drawing.Point(256,8)
+        $filterBox.Size = New-Object System.Drawing.Size(410,28)
+        $filterPanel.Controls.Add($filterBox)
+        $filterNotice = New-Object System.Windows.Forms.Label
+        $filterNotice.Text = 'Filtro ativo nao conta paginas como visitadas.'
+        $filterNotice.ForeColor = $muted
+        $filterNotice.Location = New-Object System.Drawing.Point(680,12)
+        $filterNotice.AutoSize = $true
+        $filterNotice.Visible = $false
+        $filterPanel.Controls.Add($filterNotice)
+        $layout.Controls.Add($filterPanel,0,1)
 
-        $searchPanel = New-Object System.Windows.Forms.Panel
-        $searchPanel.Dock = 'Top'
-        $searchPanel.Height = 43
+        $tabs = New-Object System.Windows.Forms.TabControl
+        $tabs.Dock = 'Fill'
+        $tabs.Font = New-Object System.Drawing.Font('Segoe UI',9,[System.Drawing.FontStyle]::Bold)
+        $layout.Controls.Add($tabs,0,2)
+        $grids = @{}
+        foreach ($category in $categories) {
+            $tab = New-Object System.Windows.Forms.TabPage
+            $tab.Text = $category
+            $tab.BackColor = $panel
+            [void]$tabs.TabPages.Add($tab)
+            if ($category -eq 'INFORMACOES') {
+                $info = New-Object System.Windows.Forms.Label
+                $info.Dock = 'Fill'; $info.Padding = New-Object System.Windows.Forms.Padding(20)
+                $info.ForeColor = $white
+                $info.Font = New-Object System.Drawing.Font('Consolas',11)
+                $info.Text = ('SESSAO: ' + $script:Session + [Environment]::NewLine + [Environment]::NewLine +
+                    'Processos na leitura inicial: ' + $script:Stats.ProcessCount + [Environment]::NewLine +
+                    'Assinaturas validas: ' + $script:Stats.SignedValid + [Environment]::NewLine +
+                    'Sem assinatura na amostra: ' + $script:Stats.Unsigned + [Environment]::NewLine +
+                    'Drivers consultados: ' + $script:GuiDriverSignaturesChecked + ' arquivos (amostra)' + [Environment]::NewLine + [Environment]::NewLine +
+                    'Assinatura ausente NAO comprova cheat.' + [Environment]::NewLine +
+                    'Drivers podem ser assinados por catalogo; esta tela nao e definitiva.' + [Environment]::NewLine +
+                    'Atualizar muda a visualizacao, nao a varredura inicial.' + [Environment]::NewLine +
+                    'Paginas visitadas nao comprovam que a gravacao esteja completa.' + [Environment]::NewLine +
+                    'Nenhuma alteracao de seguranca ou envio de dados e realizada.' + [Environment]::NewLine +
+                    'Nomes, PIDs e programas aparecem apenas nesta janela.')
+                $tab.Controls.Add($info)
+            } else {
+                $grid = New-Object System.Windows.Forms.DataGridView
+                $grid.Dock = 'Fill'; $grid.ReadOnly = $true
+                $grid.BackgroundColor = $panel
+                $grid.GridColor = [System.Drawing.Color]::FromArgb(48,64,82)
+                $grid.EnableHeadersVisualStyles = $false
+                $grid.ColumnHeadersDefaultCellStyle.BackColor = $dark
+                $grid.ColumnHeadersDefaultCellStyle.ForeColor = $cyan
+                $grid.DefaultCellStyle.BackColor = $panel
+                $grid.DefaultCellStyle.ForeColor = $white
+                $grid.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(40,93,111)
+                $grid.DefaultCellStyle.SelectionForeColor = $white
+                $grid.RowHeadersVisible = $false
+                $grid.AllowUserToAddRows = $false; $grid.AllowUserToDeleteRows = $false
+                $grid.MultiSelect = $false
+                $grid.SelectionMode = 'FullRowSelect'
+                $grid.AutoSizeColumnsMode = 'Fill'
+                $grid.AllowUserToResizeRows = $false
+                $grids[$category] = $grid
+                $tab.Controls.Add($grid)
+            }
+        }
 
-        $searchLabel = New-Object System.Windows.Forms.Label
-        $searchLabel.Text = 'Filtrar nome/PID:'
-        $searchLabel.ForeColor = $white
-        $searchLabel.AutoSize = $true
-        $searchLabel.Location = New-Object System.Drawing.Point(10,12)
-        $searchPanel.Controls.Add($searchLabel)
+        $bottom = New-Object System.Windows.Forms.Panel
+        $bottom.Dock = 'Fill'; $bottom.BackColor = $dark
+        $privacy = New-Object System.Windows.Forms.Label
+        $privacy.Text = 'PRIVACIDADE: a gravacao pode mostrar nomes de programas. Confira o video antes de enviar.'
+        $privacy.ForeColor = $muted
+        $privacy.Location = New-Object System.Drawing.Point(20,5)
+        $privacy.AutoSize = $true
+        $bottom.Controls.Add($privacy)
 
-        $searchBox = New-Object System.Windows.Forms.TextBox
-        $searchBox.Location = New-Object System.Drawing.Point(155,8)
-        $searchBox.Width = 340
-        $searchPanel.Controls.Add($searchBox)
+        $prev = New-Object System.Windows.Forms.Button
+        $prev.Text = '<< Anterior'; $prev.Location = New-Object System.Drawing.Point(20,42)
+        $prev.Size = New-Object System.Drawing.Size(130,35)
+        $bottom.Controls.Add($prev)
+        $next = New-Object System.Windows.Forms.Button
+        $next.Text = 'Proxima >>'; $next.Location = New-Object System.Drawing.Point(158,42)
+        $next.Size = New-Object System.Drawing.Size(130,35)
+        $bottom.Controls.Add($next)
+        $progress = New-Object System.Windows.Forms.Label
+        $progress.ForeColor = $cyan
+        $progress.Font = New-Object System.Drawing.Font('Consolas',10)
+        $progress.Location = New-Object System.Drawing.Point(302,46)
+        $progress.Size = New-Object System.Drawing.Size(460,32)
+        $bottom.Controls.Add($progress)
+        $refresh = New-Object System.Windows.Forms.Button
+        $refresh.Text = 'Atualizar listas'
+        $refresh.Location = New-Object System.Drawing.Point(760,42)
+        $refresh.Size = New-Object System.Drawing.Size(142,35)
+        $bottom.Controls.Add($refresh)
+        $finish = New-Object System.Windows.Forms.Button
+        $finish.Text = 'Concluir verificacao'
+        $finish.Location = New-Object System.Drawing.Point(915,42)
+        $finish.Size = New-Object System.Drawing.Size(175,35)
+        $finish.Add_Click({ $script:Gui23Window.Close() })
+        $bottom.Controls.Add($finish)
+        $layout.Controls.Add($bottom,0,3)
 
-        $grid = New-Object System.Windows.Forms.DataGridView
-        $grid.Dock = 'Fill'
-        $grid.BackgroundColor = $panel
-        $grid.GridColor = [System.Drawing.Color]::FromArgb(49,66,85)
-        $grid.EnableHeadersVisualStyles = $false
-        $grid.ColumnHeadersDefaultCellStyle.BackColor = $dark
-        $grid.ColumnHeadersDefaultCellStyle.ForeColor = $cyan
-        $grid.DefaultCellStyle.BackColor = $panel
-        $grid.DefaultCellStyle.ForeColor = $white
-        $grid.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(44,100,116)
-        $grid.DefaultCellStyle.SelectionForeColor = $white
-        $grid.RowHeadersVisible = $false
-        $grid.AllowUserToAddRows = $false
-        $grid.AllowUserToDeleteRows = $false
-        $grid.ReadOnly = $true
-        $grid.MultiSelect = $false
-        $grid.SelectionMode = 'FullRowSelect'
-        $grid.AutoSizeColumnsMode = 'Fill'
-        $grid.AutoGenerateColumns = $true
-        $tab1Layout = New-Object System.Windows.Forms.TableLayoutPanel
-        $tab1Layout.Dock = 'Fill'
-        $tab1Layout.RowCount = 2
-        $tab1Layout.ColumnCount = 1
-        $tab1Layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,43))) | Out-Null
-        $tab1Layout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent,100))) | Out-Null
-        $tab1.Controls.Add($tab1Layout)
-        $tab1Layout.Controls.Add($searchPanel,0,0)
-        $tab1Layout.Controls.Add($grid,0,1)
-
-        $serviceGrid = New-Object System.Windows.Forms.DataGridView
-        $serviceGrid.Dock = 'Fill'
-        $serviceGrid.BackgroundColor = $panel
-        $serviceGrid.GridColor = $grid.GridColor
-        $serviceGrid.EnableHeadersVisualStyles = $false
-        $serviceGrid.ColumnHeadersDefaultCellStyle.BackColor = $dark
-        $serviceGrid.ColumnHeadersDefaultCellStyle.ForeColor = $cyan
-        $serviceGrid.DefaultCellStyle.BackColor = $panel
-        $serviceGrid.DefaultCellStyle.ForeColor = $white
-        $serviceGrid.DefaultCellStyle.SelectionBackColor = $grid.DefaultCellStyle.SelectionBackColor
-        $serviceGrid.RowHeadersVisible = $false
-        $serviceGrid.ReadOnly = $true
-        $serviceGrid.AllowUserToAddRows = $false
-        $serviceGrid.AllowUserToDeleteRows = $false
-        $serviceGrid.SelectionMode = 'FullRowSelect'
-        $serviceGrid.AutoSizeColumnsMode = 'Fill'
-        $tab2.Controls.Add($serviceGrid)
-
-        $info = New-Object System.Windows.Forms.Label
-        $info.Dock = 'Fill'
-        $info.ForeColor = $white
-        $info.Font = New-Object System.Drawing.Font('Consolas',12)
-        $info.Padding = New-Object System.Windows.Forms.Padding(20)
-        $info.Text = ('SESSAO  ' + $script:Session + [Environment]::NewLine + [Environment]::NewLine +
-            'Processos na verificacao inicial: ' + $script:Stats.ProcessCount + [Environment]::NewLine +
-            'Executaveis com assinatura conferida: ' + $script:Stats.Inspected + [Environment]::NewLine +
-            'Assinatura valida: ' + $script:Stats.SignedValid + [Environment]::NewLine +
-            'Sem assinatura: ' + $script:Stats.Unsigned + [Environment]::NewLine +
-            'Outros estados: ' + $script:Stats.OtherSignature + [Environment]::NewLine + [Environment]::NewLine +
-            'Esta janela NAO prova ausencia ou presenca de cheats.' + [Environment]::NewLine +
-            'O botao Atualizar muda a lista visual, nao o relatorio da varredura inicial.' + [Environment]::NewLine +
-            'Sem coleta continua, sem alteracao de configuracoes.')
-        $tab3.Controls.Add($info)
-
-        # These controls are needed by events while ShowDialog is active.
-        $script:GuiView = @{ Grid = $grid; ServiceGrid = $serviceGrid; PageInfo = $pageInfo;
-            Back = $back; Forward = $forward; SearchBox = $searchBox; Reload = $reload }
-        $script:GuiRender = {
-            $g = $script:Gui
-            $v = $script:GuiView
-            if ($g.Tab -eq 2) {
-                $v.Grid.DataSource = $null
-                $v.ServiceGrid.DataSource = $null
-                $v.PageInfo.Text = 'Resumo da verificacao'
-                $v.Back.Enabled = $false; $v.Forward.Enabled = $false; $v.Reload.Enabled = $false
+        $script:Gui23Window = $window
+        $script:Gui23Controls = @{
+            Tabs = $tabs; Filter = $filterBox; Notice = $filterNotice; Grids = $grids
+            Progress = $progress; Prev = $prev; Next = $next; Refresh = $refresh
+        }
+        $script:Gui23Render = {
+            $state = $script:Gui23
+            $controls = $script:Gui23Controls
+            $category = $state.Active
+            if ($category -eq 'INFORMACOES') {
+                $controls.Filter.Enabled = $false
+                $controls.Notice.Visible = $false
+                $controls.Prev.Enabled = $false; $controls.Next.Enabled = $false
+                $controls.Refresh.Enabled = $false
+                $controls.Progress.Text = 'Resumo da sessao'
                 return
             }
-            $currentRows = @()
-            if ($g.Tab -eq 0) {
-                $query = $g.Search.Trim()
-                if ($query.Length -eq 0) { $currentRows = @($g.Processes) }
-                else { $currentRows = @($g.Processes | Where-Object { $_.Nome -like ('*' + $query + '*') -or [string]$_.PID -like ('*' + $query + '*') }) }
-            } else { $currentRows = @($g.Services) }
-            $total = $currentRows.Count
-            $pages = [Math]::Max(1,[Math]::Ceiling($total / $g.PageSize))
-            if ($g.Page -ge $pages) { $g.Page = $pages - 1 }
-            if ($g.Page -lt 0) { $g.Page = 0 }
-            $from = $g.Page * $g.PageSize
-            $toDisplay = @($currentRows | Select-Object -Skip $from -First $g.PageSize)
+            $controls.Filter.Enabled = $true
+            $columns = @($state.Columns[$category])
+            $items = @($state.Rows[$category])
+            $filter = $state.Filter.Trim()
+            if ($filter.Length -gt 0) {
+                $items = @($items | Where-Object {
+                    $row = $_; $matched = $false
+                    foreach ($field in $columns) {
+                        if ([string]$row.$field -like ('*' + $filter + '*')) { $matched = $true; break }
+                    }
+                    $matched
+                })
+            }
+            $controls.Notice.Visible = ($filter.Length -gt 0)
+            $total = $items.Count
+            $pages = [Math]::Max(1,[int][Math]::Ceiling($total / $state.PageSize))
+            if ($state.Page -ge $pages) { $state.Page = $pages - 1 }
+            if ($state.Page -lt 0) { $state.Page = 0 }
+            if ($filter.Length -eq 0) { $pageKey = [string]$state.Page; $state.Visited[$category][$pageKey] = $true }
+            $current = @($items | Select-Object -Skip ($state.Page * $state.PageSize) -First $state.PageSize)
             $table = New-Object System.Data.DataTable
-            $columns = if ($g.Tab -eq 0) { @('Nome','PID','RAM_MB','Assinatura') } else { @('Servico','Descricao','Estado') }
-            foreach ($c in $columns) { [void]$table.Columns.Add($c,[string]) }
-            foreach ($row in $toDisplay) {
-                $cells = foreach ($c in $columns) { [string]$row.$c }
+            foreach ($field in $columns) { [void]$table.Columns.Add($field,[string]) }
+            foreach ($row in $current) {
+                $cells = foreach ($field in $columns) { [string]$row.$field }
                 [void]$table.Rows.Add([object[]]$cells)
             }
-            if ($g.Tab -eq 0) { $v.Grid.DataSource = $table; $v.ServiceGrid.DataSource = $null }
-            else { $v.ServiceGrid.DataSource = $table; $v.Grid.DataSource = $null }
-            $v.PageInfo.Text = ('Pagina {0}/{1}   |   {2} itens' -f ($g.Page+1),$pages,$total)
-            $v.Back.Enabled = $g.Page -gt 0
-            $v.Forward.Enabled = $g.Page -lt ($pages - 1)
-            $v.Reload.Enabled = $true
+            $controls.Grids[$category].DataSource = $table
+            $visits = $state.Visited[$category].Count
+            if ($filter.Length -eq 0) {
+                $controls.Progress.Text = ('Pagina {0}/{1}  |  Visitadas {2}/{1}' -f ($state.Page+1),$pages,$visits)
+            } else {
+                $controls.Progress.Text = ('Filtrado: pagina {0}/{1}  |  {2} itens' -f ($state.Page+1),$pages,$total)
+            }
+            $controls.Prev.Enabled = ($state.Page -gt 0)
+            $controls.Next.Enabled = ($state.Page -lt ($pages - 1))
+            $controls.Refresh.Enabled = ($category -eq 'PROCESSOS' -or $category -eq 'SERVICOS')
         }
-        $back.Add_Click({ $script:Gui.Page--; & $script:GuiRender })
-        $forward.Add_Click({ $script:Gui.Page++; & $script:GuiRender })
-        $searchBox.Add_TextChanged({ $script:Gui.Search = $script:GuiView.SearchBox.Text; $script:Gui.Page = 0; & $script:GuiRender })
+        $prev.Add_Click({ $script:Gui23.Page--; & $script:Gui23Render })
+        $next.Add_Click({ $script:Gui23.Page++; & $script:Gui23Render })
+        $filterBox.Add_TextChanged({
+            $script:Gui23.Filter = $script:Gui23Controls.Filter.Text
+            $script:Gui23.Page = 0
+            & $script:Gui23Render
+        })
         $tabs.Add_SelectedIndexChanged({
-            $script:Gui.Tab = $script:GuiTabs.SelectedIndex
-            $script:Gui.Page = 0
-            & $script:GuiRender
+            $script:Gui23.Active = [string]$script:Gui23.Categories[$script:Gui23Controls.Tabs.SelectedIndex]
+            $script:Gui23.Page = 0
+            $script:Gui23.Filter = ''
+            $script:Gui23Controls.Filter.Text = ''
+            & $script:Gui23Render
         })
-        $reload.Add_Click({
+        $refresh.Add_Click({
             try {
-                $script:Gui.Processes = @(Get-SentinelProcessRows -Items @(Get-Process -ErrorAction Stop))
-                $script:Gui.Services = @(Get-SentinelServiceRows)
-                $script:Gui.Page = 0
-                & $script:GuiRender
-            } catch { [System.Windows.Forms.MessageBox]::Show('Nao foi possivel atualizar a lista.', 'MVS LOST MEDIA T1') | Out-Null }
+                $script:Gui23.Rows['PROCESSOS'] = @(Get-LMProcessRows -Items @(Get-Process -ErrorAction Stop))
+                $script:Gui23.Rows['SERVICOS'] = @(Get-LMServiceRows)
+                $script:Gui23.Visited['PROCESSOS'] = @{}
+                $script:Gui23.Visited['SERVICOS'] = @{}
+                $script:Gui23.Page = 0
+                & $script:Gui23Render
+            } catch {
+                [void][System.Windows.Forms.MessageBox]::Show('Nao foi possivel atualizar as listas.', 'MVS LOST MEDIA')
+            }
         })
-        & $script:GuiRender
-        Say '  A janela visual foi aberta. Percorra as paginas e clique em Concluir verificacao.' Cyan
+        & $script:Gui23Render
+        Say '  Inspector visual aberto. Passe pelas abas e conclua a verificacao.' Cyan
         [void]$window.ShowDialog()
-        Check 'Inspecao visual' 'INFO' 'Janela de processos e servicos aberta e encerrada pelo usuario.'
+        $visitedSummary = @()
+        foreach ($cat in @('PROCESSOS','SERVICOS','DRIVERS','INICIALIZACAO','REVISAO')) {
+            $visitedSummary += ($cat + '=' + [string]$script:Gui23.Visited[$cat].Count)
+        }
+        Check 'Inspecao visual' 'INFO' ('Janela encerrada. Paginas visitadas (nao comprova gravacao): ' + ($visitedSummary -join ', ') + '.')
     } catch {
-        Say ('  Falha na janela: ' + $_.Exception.Message) Yellow
-        Check 'Inspecao visual' 'INFO' ('Janela indisponivel: ' + $_.Exception.GetType().Name + '. A auditoria continua.')
+        Say ('  Janela indisponivel: ' + $_.Exception.Message) Yellow
+        Check 'Inspecao visual' 'INFO' ('Janela nao concluida: ' + $_.Exception.GetType().Name + '.')
     } finally {
         if ($null -ne $window) { $window.Dispose() }
-        $script:Gui = $null
-        $script:GuiView = $null
-        $script:GuiRender = $null
-        $script:GuiWindow = $null
-        $script:GuiTabs = $null
+        $script:Gui23 = $null
+        $script:Gui23Controls = $null
+        $script:Gui23Render = $null
+        $script:Gui23Window = $null
     }
 }
 
@@ -412,11 +492,11 @@ Say '  |                                                                  |' Dar
 Say '  |  SYSTEM CHECK                                                    |' White
 Say '  |  Processos  /  Seguranca Windows  /  Assinaturas digitais        |' DarkCyan
 Say '  |                                                                  |' DarkCyan
-Say '  |  BUILD 2.2.1                 CONSULTAS SOMENTE LEITURA             |' Cyan
+Say '  |  BUILD 2.3                 CONSULTAS SOMENTE LEITURA             |' Cyan
 Say '  +------------------------------------------------------------------+' DarkCyan
 Say ('  SESSAO ' + $script:Session + '    ' + $script:Started) Gray
 Say '  Sem envio de dados | Sem veredito automatico | Relatorios locais' DarkGray
-Write-SentinelSection '01' 'Identificacao do ambiente'
+Write-LMSection '01' 'Identificacao do ambiente'
 try {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $asAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -429,7 +509,7 @@ try {
     Check 'Windows' 'INFO' ('Build ' + [string]$os.BuildNumber)
 } catch { Check 'Windows' 'INFO' 'Build indisponivel.' }
 
-Write-SentinelSection '02' 'Protecao do dispositivo'
+Write-LMSection '02' 'Protecao do dispositivo'
 try {
     $mp = Get-MpComputerStatus -ErrorAction Stop
     WinStatus 'Microsoft Defender' $mp.AntivirusEnabled
@@ -448,7 +528,7 @@ try {
     }
 } catch { Check 'Firewall' 'INFO' 'Nao foi possivel consultar os perfis.' }
 
-Write-SentinelSection '03' 'Servicos e isolamento'
+Write-LMSection '03' 'Servicos e isolamento'
 foreach ($name in @('WinDefend','mpssvc','wscsvc')) {
     try {
         $s = Get-Service -Name $name -ErrorAction Stop
@@ -463,7 +543,7 @@ try {
     else { Check 'Integridade de memoria' 'INFO' 'HVCI nao consta em execucao; isso nao e prova de cheat.' }
 } catch { Check 'Integridade de memoria' 'INFO' 'Consulta de Device Guard indisponivel.' }
 
-Write-SentinelSection '04' 'Processos e assinaturas'
+Write-LMSection '04' 'Processos e assinaturas'
 try {
     $runningProcesses = @(Get-Process -ErrorAction Stop)
     $script:Stats.ProcessCount = $runningProcesses.Count
@@ -504,7 +584,7 @@ try {
         elseif ($status -eq 'NotSigned') { $unsigned++ }
         else { $other++ }
         if ($status -ne 'Valid') {
-            [void]$reviewLocal.Add([pscustomobject]@{ File=[IO.Path]::GetFileName($loc); Signature=$status })
+            [void]$reviewLocal.Add([pscustomobject]@{ File=[IO.Path]::GetFileName($loc); Signature=$status; Path=$loc })
         }
         if ($roblox.Count -gt 0) {
             foreach ($rp in $roblox) {
@@ -519,6 +599,7 @@ try {
     $script:Stats.Unsigned = $unsigned
     $script:Stats.OtherSignature = $other
     $script:GuiProcesses = @($runningProcesses)
+    $script:GuiReviewItems = @($reviewLocal)
     $script:GuiReady = $true
     Check 'Assinaturas verificadas' 'INFO' ("$processed/$($locations.Count) executaveis: $valid validos, $unsigned sem assinatura, $other outros estados.")
     if ($locations.Count -gt $processed) {
@@ -548,10 +629,10 @@ try {
 
 # Window is opened after the audit. This does not collect data in the background.
 if (-not $NoViewer -and $script:GuiReady) {
-    Open-SentinelViewer
+    Open-LMVisualInspector
 }
 
-Write-SentinelSection '05' 'Comparacao entre execucoes'
+Write-LMSection '05' 'Comparacao entre execucoes'
 $folder = $null
 $previousSnapshot = $null
 try {
@@ -591,7 +672,7 @@ if ($NoHistory) {
     } catch { Check 'Comparacao' 'INFO' 'Snapshot antigo incompativel; iniciando nova referencia.' }
 }
 
-Write-SentinelSection '06' 'Integridade e resumo'
+Write-LMSection '06' 'Integridade e resumo'
 try {
     $hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256 -ErrorAction Stop).Hash
     Check 'SHA-256 deste arquivo' 'INFO' $hash
@@ -614,7 +695,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.2.1',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.3',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -626,7 +707,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.2.1**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.3**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
@@ -653,5 +734,5 @@ if ($null -ne $folder) {
         }
     } catch { Say ('  Falha ao salvar relatorios: ' + $_.Exception.Message) Yellow }
 } else { Say '  Nao foi possivel salvar relatorios nesta execucao.' Yellow }
-Say '  ENCERRADO  |  MVS LOST MEDIA  |  T1 SYSTEM CHECK 2.2.1' DarkCyan
+Say '  ENCERRADO  |  MVS LOST MEDIA  |  T1 SYSTEM CHECK 2.3' DarkCyan
 if (-not $NoPause) { Write-Host ''; [void](Read-Host '  Pressione ENTER para fechar') }
