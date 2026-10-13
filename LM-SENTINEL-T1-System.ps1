@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | T1 SYSTEM CHECK | Build 2.5.1
+MVS Lost Media | T1 SYSTEM CHECK | Build 2.5.2
 Public, read-only Windows security and process audit.
 No external connections made by the script, no automatic elevation or system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
@@ -62,7 +62,7 @@ function Write-LMIntro {
     Say '  |                      | |___  | |  | |                            |' Cyan
     Say '  |                      |_____| |_|  |_|                            |' Cyan
     Say '  |                                                                  |' DarkCyan
-    Say '  |     SYSTEM CHECK  /  BUILD 2.5.1  /  SOMENTE LEITURA               |' White
+    Say '  |     SYSTEM CHECK  /  BUILD 2.5.2  /  SOMENTE LEITURA               |' White
     Say '  |                                                                  |' DarkCyan
     Say '  +------------------------------------------------------------------+' DarkCyan
     Say '  Servidor: MVS Lost Media | Dono: Mangaka' Gray
@@ -220,15 +220,17 @@ function Open-LMVisualInspector {
         function script:Get-LMReviewRows {
             $out = New-Object 'System.Collections.Generic.List[object]'
             foreach ($entry in $script:GuiReviewItems) {
-                $names = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-                foreach ($proc in $script:GuiProcesses) {
-                    try {
-                        if ($proc.Path -and [string]::Equals([string]$proc.Path, [string]$entry.Path, [StringComparison]::OrdinalIgnoreCase)) {
-                            [void]$names.Add([string]$proc.ProcessName)
-                        }
-                    } catch { }
-                }
-                $processNames = if ($names.Count -gt 0) { (@($names | Select-Object -First 3) -join ', ') } else { 'Indisponivel' }
+                # Avoid generic constructor overload binding issues in Windows PowerShell 5.1.
+                $names = @(
+                    foreach ($proc in $script:GuiProcesses) {
+                        try {
+                            if ($proc.Path -and [string]::Equals([string]$proc.Path, [string]$entry.Path, [StringComparison]::OrdinalIgnoreCase)) {
+                                [string]$proc.ProcessName
+                            }
+                        } catch { }
+                    }
+                ) | Sort-Object -Unique | Select-Object -First 3
+                $processNames = if (@($names).Count -gt 0) { (@($names) -join ', ') } else { 'Indisponivel' }
                 $result = switch ([string]$entry.Signature) {
                     'NotSigned' { 'Sem assinatura' }
                     default { [string]$entry.Signature }
@@ -277,7 +279,7 @@ function Open-LMVisualInspector {
         $muted = [System.Drawing.Color]::FromArgb(158,177,197)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5.1'
+        $window.Text = 'MVS LOST MEDIA  |  T1 SYSTEM CHECK v2.5.2'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1130,745)
         $window.MinimumSize = New-Object System.Drawing.Size(1040,620)
@@ -305,7 +307,7 @@ function Open-LMVisualInspector {
         $title.AutoSize = $true
         $top.Controls.Add($title)
         $subtitle = New-Object System.Windows.Forms.Label
-        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5.1'
+        $subtitle.Text = 'SYSTEM CHECK  /  PROCESSOS / DRIVERS / INICIALIZACAO  /  BUILD 2.5.2'
         $subtitle.ForeColor = $muted
         $subtitle.Font = New-Object System.Drawing.Font('Consolas',10)
         $subtitle.Location = New-Object System.Drawing.Point(23,55)
@@ -461,8 +463,10 @@ function Open-LMVisualInspector {
             $table = New-Object System.Data.DataTable
             foreach ($field in $columns) { [void]$table.Columns.Add($field,[string]) }
             foreach ($row in $current) {
-                $cells = foreach ($field in $columns) { [string]$row.$field }
-                [void]$table.Rows.Add([object[]]$cells)
+                # NewRow avoids overload resolution for DataRowCollection.Add(object[]).
+                $dataRow = $table.NewRow()
+                foreach ($field in $columns) { $dataRow[$field] = [string]$row.$field }
+                [void]$table.Rows.Add($dataRow)
             }
             $controls.Grids[$category].DataSource = $table
             $visits = $state.Visited[$category].Count
@@ -510,8 +514,13 @@ function Open-LMVisualInspector {
         }
         Check 'Inspecao visual' 'INFO' ('Janela encerrada. Paginas visitadas (nao comprova gravacao): ' + ($visitedSummary -join ', ') + '.')
     } catch {
-        Say ('  Janela indisponivel: ' + $_.Exception.Message) Yellow
-        Check 'Inspecao visual' 'INFO' ('Janela nao concluida: ' + $_.Exception.GetType().Name + '.')
+        # Show a precise failure location to debug GUI compatibility without guessing.
+        $detail = $_
+        $line = if ($detail.InvocationInfo) { [string]$detail.InvocationInfo.ScriptLineNumber } else { '?' }
+        $type = $detail.Exception.GetType().Name
+        Say ('  Nao foi possivel concluir o painel: ' + $type + ' (linha ' + $line + ').') Yellow
+        Say ('  Detalhe tecnico: ' + $detail.Exception.Message) DarkGray
+        Check 'Inspecao visual' 'INFO' ('Janela nao concluida: ' + $type + ' (linha ' + $line + ').')
     } finally {
         if ($null -ne $window) { $window.Dispose() }
         $script:Gui23 = $null
@@ -731,7 +740,7 @@ Say '  +------------------------------------------------------------------+' Dar
 Say '  |              MVS LOST MEDIA  |  T1 SYSTEM CHECK                  |' Cyan
 Say '  |                    RESULTADOS DA VERIFICACAO                     |' White
 Say '  +------------------------------------------------------------------+' DarkCyan
-Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5.1') DarkGray
+Say ('  Sessao: ' + $script:Session + '  |  BUILD 2.5.2') DarkGray
 Say ''
 # Exibe aqui os resultados mais importantes. A lista completa vai no TXT.
 $highlightInfo = @('Processos ativos','Roblox','Integridade de memoria','Cobertura de executaveis','Assinaturas verificadas','Processos')
@@ -761,10 +770,9 @@ if (-not $NoViewer) {
             Check 'Processos do painel' 'INFO' 'Nova leitura indisponivel; outras abas ainda podem funcionar.'
         }
     }
-    if (-not $NoPause) { [void](Read-Host '  Pressione ENTER para abrir o painel visual') }
-    # ETAPA 3 / 3: tentar a janela mesmo se alguma verificacao anterior falhou.
+    if (-not $NoPause) { [void](Read-Host '  Pressione ENTER para prosseguir para a proxima etapa') }
+    # ETAPA 3 / 3: o painel e a proxima etapa; sem mensagem de carregamento.
     Clear-Host
-    Say '  MVS LOST MEDIA | Abrindo painel visual...' Cyan
     $script:QuietAudit = $true
     Open-LMVisualInspector
     $script:QuietAudit = $false
@@ -783,7 +791,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5.1',
+            'MVS LOST MEDIA | T1 SYSTEM CHECK | BUILD 2.5.2',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -795,7 +803,7 @@ if ($null -ne $folder) {
         $reportLines | Set-Content -LiteralPath $report -Encoding UTF8 -ErrorAction Stop
 
         $discordLines = @(
-            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5.1**',
+            '**MVS LOST MEDIA | T1 SYSTEM CHECK - v2.5.2**',
             ('Sessao: `' + $script:Session + '`'),
             ('Data local: ' + $script:Started),
             ("OK: **$ok** | Revisao: **$review** | Info: **$info**"),
