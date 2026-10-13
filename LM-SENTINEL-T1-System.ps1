@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS Lost Media | SENTINEL T1:01 | Build 2.1
+MVS Lost Media | SENTINEL T1:01 | Build 2.1.1
 Public, read-only Windows security and process audit.
 No external connections, no automatic elevation, no Registry/system changes.
 Only creates local reports and an optional aggregate-only comparison snapshot.
@@ -46,7 +46,7 @@ $script:Stats = [ordered]@{
 function Say([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Message -ForegroundColor $Color
 }
-function Group([string]$Id,[string]$Heading) {
+function Write-SentinelSection([string]$Id,[string]$Heading) {
     Write-Host ''
     Say ('  [' + $Id + ']  ' + $Heading.ToUpperInvariant()) Cyan
     Say '  --------------------------------------------------------------' DarkGray
@@ -147,7 +147,7 @@ function Open-SentinelViewer {
         $muted = [System.Drawing.Color]::FromArgb(158,175,194)
 
         $window = New-Object System.Windows.Forms.Form
-        $window.Text = 'LM SENTINEL | Verificacao visual T1 | BUILD 2.1'
+        $window.Text = 'LM SENTINEL | Verificacao visual T1 | BUILD 2.1.1'
         $window.StartPosition = 'CenterScreen'
         $window.Size = New-Object System.Drawing.Size(1060,720)
         $window.MinimumSize = New-Object System.Drawing.Size(1000,580)
@@ -413,12 +413,12 @@ Say '    \ `--. | |__  |  \| |  | |    | ||  \| || |__  | |' Cyan
 Say '     `--. \|  __| | . ` |  | |    | || . ` ||  __| | |' Cyan
 Say '    /\__/ /| |___ | |\  |  | | /\__/ /| |\  || |___ | |___' Cyan
 Say '    \____/ \____/ \_| \_/  \_/ \____/ \_| \_/\____/ \_____/' DarkCyan
-Say '   BUILD 2.1     |     SYSTEM OBSERVATION     |     READ ONLY' White
+Say '   BUILD 2.1.1     |     SYSTEM OBSERVATION     |     READ ONLY' White
 Say '  ===================================================================' DarkCyan
 Say ('   SESSAO ' + $script:Session + '    ' + $script:Started) Gray
 Say '   Sem rede | Sem veredito automatico | Relatorio local sem nomes' DarkGray
 
-Group '01' 'Identificacao do ambiente'
+Write-SentinelSection '01' 'Identificacao do ambiente'
 try {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $asAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -431,7 +431,7 @@ try {
     Check 'Windows' 'INFO' ('Build ' + [string]$os.BuildNumber)
 } catch { Check 'Windows' 'INFO' 'Build indisponivel.' }
 
-Group '02' 'Protecao do dispositivo'
+Write-SentinelSection '02' 'Protecao do dispositivo'
 try {
     $mp = Get-MpComputerStatus -ErrorAction Stop
     WinStatus 'Microsoft Defender' $mp.AntivirusEnabled
@@ -450,7 +450,7 @@ try {
     }
 } catch { Check 'Firewall' 'INFO' 'Nao foi possivel consultar os perfis.' }
 
-Group '03' 'Servicos e isolamento'
+Write-SentinelSection '03' 'Servicos e isolamento'
 foreach ($name in @('WinDefend','mpssvc','wscsvc')) {
     try {
         $s = Get-Service -Name $name -ErrorAction Stop
@@ -465,7 +465,7 @@ try {
     else { Check 'Integridade de memoria' 'INFO' 'HVCI nao consta em execucao; isso nao e prova de cheat.' }
 } catch { Check 'Integridade de memoria' 'INFO' 'Consulta de Device Guard indisponivel.' }
 
-Group '04' 'Processos e assinaturas'
+Write-SentinelSection '04' 'Processos e assinaturas'
 try {
     $runningProcesses = @(Get-Process -ErrorAction Stop)
     $script:Stats.ProcessCount = $runningProcesses.Count
@@ -553,7 +553,7 @@ if (-not $NoViewer -and $script:GuiReady) {
     Open-SentinelViewer
 }
 
-Group '05' 'Comparacao entre execucoes'
+Write-SentinelSection '05' 'Comparacao entre execucoes'
 $folder = $null
 $previousSnapshot = $null
 try {
@@ -593,7 +593,7 @@ if ($NoHistory) {
     } catch { Check 'Comparacao' 'INFO' 'Snapshot antigo incompativel; iniciando nova referencia.' }
 }
 
-Group '06' 'Integridade e resumo'
+Write-SentinelSection '06' 'Integridade e resumo'
 try {
     $hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256 -ErrorAction Stop).Hash
     Check 'SHA-256 deste arquivo' 'INFO' $hash
@@ -616,7 +616,7 @@ if ($null -ne $folder) {
         $report = Join-Path $folder ($prefix + '.txt')
         $discordFile = Join-Path $folder ($prefix + '-DISCORD.txt')
         $reportLines = @(
-            'MVS LOST MEDIA | SENTINEL T1:01 | BUILD 2.1',
+            'MVS LOST MEDIA | SENTINEL T1:01 | BUILD 2.1.1',
             ('Sessao: ' + $script:Session),
             ('Data local: ' + $script:Started),
             'Somente leitura; sem envio de dados; sem nomes/caminhos de processos.',
@@ -655,5 +655,5 @@ if ($null -ne $folder) {
         }
     } catch { Say ('  Falha ao salvar relatorios: ' + $_.Exception.Message) Yellow }
 } else { Say '  Nao foi possivel salvar relatorios nesta execucao.' Yellow }
-Say '  ENCERRADO  |  MVS LOST MEDIA  |  SENTINEL 2.1' DarkCyan
+Say '  ENCERRADO  |  MVS LOST MEDIA  |  SENTINEL 2.1.1' DarkCyan
 if (-not $NoPause) { Write-Host ''; [void](Read-Host '  Pressione ENTER para fechar') }
