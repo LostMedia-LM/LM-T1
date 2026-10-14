@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS LOST MEDIA | T1 REGISTRY CHECK 3.4
+MVS LOST MEDIA | T1 REGISTRY CHECK 3.4.1
 Independent second verification for Windows PowerShell 5.1.
 Read-only: does not change registry values, Defender settings, services,
 files, or Windows execution policies. No network calls or automatic uploads.
@@ -32,7 +32,7 @@ function LM-Banner {
     LM-Text ('  | ' + '       | |___  | |  | |   REGISTRY / DEFENDER / REVIEW'.PadRight(66) + ' |') White
     LM-Text ('  | ' + '       |_____| |_|  |_|'.PadRight(66) + ' |') Cyan
     LM-Text ('  |' + ('-' * 68) + '|') DarkCyan
-    LM-Text ('  | ' + ('MODE: REGISTRY CHECK    BUILD 3.4    SESSION: '+$script:Session).PadRight(66) + ' |') Magenta
+    LM-Text ('  | ' + ('MODE: REGISTRY CHECK    BUILD 3.4.1    SESSION: '+$script:Session).PadRight(66) + ' |') Magenta
     LM-Text ('  +' + ('-' * 68) + '+') DarkCyan
     LM-Text '  [LOCAL CHECK] Somente leitura // Sem envio de dados' DarkGray
     LM-Text '  [NOTICE] Ausencia de alertas nao comprova ausencia de cheats.' DarkYellow
@@ -90,7 +90,7 @@ function LM-SaveReports {
         $review=@($script:Findings | Where-Object {$_.Status -eq 'REVIEW'}).Count
         $unverified=@($script:Findings | Where-Object {$_.Status -eq 'UNVERIFIED'}).Count
         $info=@($script:Findings | Where-Object {$_.Status -eq 'INFO'}).Count
-        $discord=@('**MVS LOST MEDIA | T1 REGISTRY CHECK 3.4**',('Sessao: `'+$script:Session+'`'),"OK: $ok | Revisao: $review | Nao verificado: $unverified | Info: $info",'```')
+        $discord=@('**MVS LOST MEDIA | T1 REGISTRY CHECK 3.4.1**',('Sessao: `'+$script:Session+'`'),"OK: $ok | Revisao: $review | Nao verificado: $unverified | Info: $info",'```')
         $discord+=@($script:Findings | ForEach-Object { '[{0}] {1}: {2}' -f $_.Status,$_.Caption,$_.Detail })
         $discord+=@('```','Este relatorio nao confirma nem exclui a presenca de cheats.')
         $discord | Set-Content -LiteralPath $discordPath -Encoding UTF8 -ErrorAction Stop
@@ -102,15 +102,23 @@ function LM-End {
     LM-Text ''
     LM-Text ('  +' + ('-' * 68) + '+') DarkCyan
     LM-Text ('  | ' + 'REGISTRY CHECK FINALIZADO  //  MVS LOST MEDIA'.PadRight(66) + ' |') Cyan
-    LM-Text ('  | ' + 'Inspecao encerrada. Consulte os relatorios locais.'.PadRight(66) + ' |') Gray
+    LM-Text ('  | ' + 'Relatorios gravados. Os resultados permanecem na tela.'.PadRight(66) + ' |') Gray
     LM-Text ('  +' + ('-' * 68) + '+') DarkCyan
-    if($NoPause) { return }
+    if ($NoPause) { return }
     Write-Host ''
-    Write-Host '  >> Pressione QUALQUER TECLA para fechar...' -ForegroundColor Magenta
+    # Descarta teclas acumuladas antes de anunciar o encerramento.
     try {
-        if([Console]::IsInputRedirected) { [void](Read-Host '  Pressione ENTER') }
-        else { [void][Console]::ReadKey($true) }
-    } catch { [void](Read-Host '  Pressione ENTER') }
+        if ([Console]::IsInputRedirected) {
+            [void](Read-Host '  Pressione ENTER para encerrar')
+        } else {
+            Start-Sleep -Milliseconds 350
+            while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
+            Write-Host '  >> Pressione QUALQUER TECLA para fechar...' -ForegroundColor Magenta
+            [void][Console]::ReadKey($true)
+        }
+    } catch {
+        [void](Read-Host '  Pressione ENTER para encerrar')
+    }
     exit
 }
 
