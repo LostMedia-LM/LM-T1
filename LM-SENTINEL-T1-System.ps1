@@ -1,7 +1,8 @@
 #requires -Version 5.1
 <#
-MVS LOST MEDIA | T1 SYSTEM CHECK 3.5.0
-Independent implementation inspired by the categories of the MCL recording checks.
+MVS LOST MEDIA | T1 SYSTEM CHECK 3.6.0
+Independent LM implementation: additional defensive review checks inspired by the LOC workflow.
+No LOC source code is copied or executed.
 Read-only security checks; optional official Microsoft Process Explorer download.
 Does not delete files, stop other processes, change registry/security settings,
 or send reports over the network. The Registry Check is an independent second verification.
@@ -34,7 +35,7 @@ function LM-Banner([string]$Phase, [string]$Code) {
     LM-Line ('  | ' + '       | |___  | |  | |   INTEGRITY / MATCH / REVIEW'.PadRight(66) + ' |') White
     LM-Line ('  | ' + '       |_____| |_|  |_|'.PadRight(66) + ' |') Cyan
     LM-Line ('  |' + ('-' * 68) + '|') DarkCyan
-    LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.5.0    SESSION: '+$Code).PadRight(66) + ' |') Magenta
+    LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.6.0    SESSION: '+$Code).PadRight(66) + ' |') Magenta
     LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
     LM-Line '  [LOCAL CHECK] Somente leitura // Sem envio de relatorios' DarkGray
     LM-Line '  [NOTICE] Um alerta isolado nao comprova cheat.' DarkYellow
@@ -306,7 +307,7 @@ function LM-CheckProcesses {
     }
 }
 function LM-SelectLocalFiles {
-    LM-Stage 'ARQUIVOS ESCOLHIDOS PELO JOGADOR (OPCIONAL)' 2
+    LM-Stage 'ARQUIVOS ESCOLHIDOS PELO JOGADOR (OPCIONAL)' 4
     LM-Line '  Os arquivos so serao lidos localmente; nao serao executados ou enviados.' Gray
     LM-Line '  O nome e o SHA-256 dos arquivos selecionados podem entrar no relatorio local.' DarkYellow
     if ($NoPause -or $SkipFilePicker) {
@@ -337,7 +338,7 @@ function LM-SelectLocalFiles {
     }
 }
 function LM-SysmonRoblox {
-    LM-Stage 'REGISTROS DE INTERACAO COM ROBLOX' 3
+    LM-Stage 'REGISTROS DE INTERACAO COM ROBLOX' 5
     $logName='Microsoft-Windows-Sysmon/Operational'
     try {
         $log=Get-WinEvent -ListLog $logName -ErrorAction Stop
@@ -401,6 +402,141 @@ function LM-SysmonCoverage {
         else { LM-Item 'TELEMETRIA' 'Sysmon' 'UNVERIFIED' 'Log desabilitado.' }
     } catch { LM-Item 'TELEMETRIA' 'Sysmon' 'UNVERIFIED' 'Nao instalado, sem acesso ou log ausente.' }
 }
+
+# Verificacao 3.6: caminhos incomuns de processos com nomes reservados do Windows.
+# A localizacao nao prova fraude; a finalidade e ajudar o revisor.
+function LM-CheckProcessIdentity {
+    LM-Stage 'IDENTIDADE DE PROCESSOS DO WINDOWS' 2
+    try {
+        $windowsRoot = [IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\')
+        $system32 = Join-Path $windowsRoot 'System32'
+        $syswow = Join-Path $windowsRoot 'SysWOW64'
+        $expected = @{
+            'svchost.exe'  = @((Join-Path $system32 'svchost.exe'), (Join-Path $syswow 'svchost.exe'))
+            'lsass.exe'    = @((Join-Path $system32 'lsass.exe'))
+            'services.exe' = @((Join-Path $system32 'services.exe'))
+            'winlogon.exe' = @((Join-Path $system32 'winlogon.exe'))
+            'csrss.exe'    = @((Join-Path $system32 'csrss.exe'))
+            'explorer.exe' = @((Join-Path $windowsRoot 'explorer.exe'))
+        }
+        $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+        $byId = @{}
+        foreach ($item in $all) { $byId[[string]$item.ProcessId] = $item }
+        $checked = 0
+        $unreadable = 0
+        $unusual = 0
+        foreach ($item in $all) {
+            $name = ([string]$item.Name).ToLowerInvariant()
+            if (-not $expected.ContainsKey($name)) { continue }
+            $raw = [string]$item.ExecutablePath
+            if ([string]::IsNullOrWhiteSpace($raw)) { $unreadable++; continue }
+            $checked++
+            $actual = [IO.Path]::GetFullPath($raw).ToLowerInvariant()
+            $normal = $false
+            foreach ($candidate in $expected[$name]) {
+                if ($actual -eq ([IO.Path]::GetFullPath($candidate).ToLowerInvariant())) { $normal = $true; break }
+            }
+            if (-not $normal) {
+                $unusual++
+                $fileSignature = LM-Signature $raw
+                LM-Item 'IDENTIDADE' $name 'REVIEW' ("PID $($item.ProcessId) | local incomum para nome do Windows | assinatura $fileSignature | revisar origem")
+            }
+        }
+        LM-Item 'IDENTIDADE' 'Cobertura de processos' 'INFO' ("$checked caminhos consultados; $unreadable indisponiveis; $unusual locais incomuns.")
+        foreach ($item in @($all | Where-Object { $_.Name -eq 'RobloxPlayerBeta.exe' } | Select-Object -First 3)) {
+            $parent = $byId[[string]$item.ParentProcessId]
+            $parentName = if ($null -ne $parent) { [string]$parent.Name } else { 'nao disponivel' }
+            LM-Item 'ORIGEM ROBLOX' 'Processo pai' 'INFO' ("Roblox PID $($item.ProcessId) | pai: $parentName | relacao informativa, nao prova cheat")
+        }
+    } catch {
+        LM-Item 'IDENTIDADE' 'Processos do Windows' 'UNVERIFIED' 'Nao foi possivel concluir a consulta de origem.'
+    }
+}
+
+# Verificacao 3.6: eventos registrados de limpeza de logs, sem coleta do conteudo privado.
+function LM-CheckEventLogHistory {
+    LM-Stage 'HISTORICO DE AUDITORIA DO WINDOWS' 3
+    $since = (Get-Date).AddHours(-2)
+    foreach ($source in @(
+        @{Log='Security'; Id=1102; Label='Log Security'},
+        @{Log='System'; Id=104; Label='Log System'}
+    )) {
+        try {
+            $metadata = Get-WinEvent -ListLog $source.Log -ErrorAction Stop
+            if (-not $metadata.IsEnabled) {
+                LM-Item 'AUDITORIA' $source.Label 'UNVERIFIED' 'Fonte de eventos desabilitada.'
+                continue
+            }
+            $events = @(Get-WinEvent -FilterHashtable @{
+                LogName=$source.Log; Id=$source.Id; StartTime=$since
+            } -MaxEvents 8 -ErrorAction SilentlyContinue)
+            if ($events.Count -gt 0) {
+                LM-Item 'AUDITORIA' $source.Label 'ATENCAO' ("$($events.Count) evento(s) de limpeza nos ultimos 120 min; pode ser manutencao legitima")
+            } else {
+                LM-Item 'AUDITORIA' $source.Label 'INFO' 'Nenhum evento de limpeza encontrado na janela consultada.'
+            }
+        } catch {
+            LM-Item 'AUDITORIA' $source.Label 'UNVERIFIED' 'Consulta do historico nao permitida ou indisponivel.'
+        }
+    }
+    try {
+        $created = @(Get-WinEvent -FilterHashtable @{
+            LogName='Security'; Id=4688; StartTime=$since
+        } -MaxEvents 100 -ErrorAction SilentlyContinue)
+        if ($created.Count -gt 0) {
+            LM-Item 'AUDITORIA' 'Criacao de processos' 'INFO' ("$($created.Count) evento(s) 4688 na amostra; nao exibe comandos ou dados privados")
+        } else {
+            LM-Item 'AUDITORIA' 'Criacao de processos' 'UNVERIFIED' 'Nenhum 4688 na amostra; auditoria pode nao estar habilitada.'
+        }
+    } catch {
+        LM-Item 'AUDITORIA' 'Criacao de processos' 'UNVERIFIED' 'Eventos 4688 nao acessiveis.'
+    }
+}
+
+# Verificacao 3.6: monitoramento limitado e opcional, somente lista de processos.
+# Uma amostragem a cada 5 segundos NAO acompanha programas que iniciam e fecham entre leituras.
+function LM-WatchProcesses {
+    LM-Stage 'MONITORAMENTO TEMPORARIO DE PROCESSOS' 7
+    if ($NoPause) {
+        LM-Item 'MONITOR' 'Acompanhamento' 'INFO' 'Ignorado em modo sem interacao.'
+        return
+    }
+    $answer = Read-Host '  Observar novos processos por 45 segundos? (S/N)'
+    if ($answer -notmatch '^(s|sim)$') {
+        LM-Item 'MONITOR' 'Acompanhamento' 'INFO' 'Nao solicitado.'
+        return
+    }
+    try {
+        $baseline = @{}
+        foreach ($proc in @(Get-Process -ErrorAction Stop)) {
+            $baseline[([string]$proc.ProcessName+'|'+[string]$proc.Id)] = $true
+        }
+        $seen = @{}
+        $inspected = @{}
+        $found = 0
+        LM-Line '  [INFO] Monitorando 45 s, amostragem a cada 5 s; nao grava atividade fora desta janela.' Gray
+        for ($pass = 1; $pass -le 9; $pass++) {
+            Start-Sleep -Seconds 5
+            foreach ($proc in @(Get-Process -ErrorAction SilentlyContinue)) {
+                $identity = [string]$proc.ProcessName+'|'+[string]$proc.Id
+                if ($baseline.ContainsKey($identity) -or $seen.ContainsKey($identity)) { continue }
+                $seen[$identity] = $true
+                $found++
+                $path = ''
+                try { $path = [string]$proc.Path } catch { }
+                if (-not [string]::IsNullOrWhiteSpace($path) -and -not $inspected.ContainsKey($path)) {
+                    $inspected[$path] = $true
+                    LM-InspectFile $path 'PROCESSO NOVO (45 S)'
+                }
+            }
+        }
+        LM-Item 'MONITOR' 'Novos processos' 'INFO' ("$found instancia(s) vistas em 45 s; nomes comuns nao indicam cheats")
+        LM-Item 'MONITOR' 'Limite da coleta' 'INFO' 'Processos muito curtos podem nao ser observados; nao ha monitoramento oculto.'
+    } catch {
+        LM-Item 'MONITOR' 'Acompanhamento' 'UNVERIFIED' 'Falha na consulta periodica de processos.'
+    }
+}
+
 function LM-Export {
     try {
         if (-not (Test-Path -LiteralPath $script:Folder)) { [void](New-Item -ItemType Directory -Path $script:Folder -Force -ErrorAction Stop) }
@@ -412,7 +548,7 @@ function LM-Export {
         @($script:Observations | Where-Object {$_.Status -in @('REVIEW','ATENCAO') -or $_.Origin -eq 'SELECIONADO'} |
             ForEach-Object { '{0} | {1} | {2} | {3} | SHA256={4}' -f $_.Name,$_.Status,$_.Origin,$_.Reason,$_.SHA256 }) |
             Set-Content -LiteralPath $evidence -Encoding UTF8 -ErrorAction Stop
-        $d = @('**MVS LOST MEDIA | T1 SYSTEM CHECK 3.5.0**',('Sessao: `'+$script:Session+'`'),'```')
+        $d = @('**MVS LOST MEDIA | T1 SYSTEM CHECK 3.6.0**',('Sessao: `'+$script:Session+'`'),'```')
         $d += @($script:Rows | ForEach-Object { '[{0}] {1}: {2}' -f $_.Status,$_.Label,$_.Detail })
         $d += @('```','Resultados sao indicios para revisao humana. Nao comprovam ausencia ou presenca de cheats.')
         $d | Set-Content -LiteralPath $discord -Encoding UTF8 -ErrorAction Stop
@@ -422,7 +558,7 @@ function LM-Export {
     } catch { Write-Host ('  Falha ao salvar relatorio: '+$_.Exception.Message) -ForegroundColor Yellow }
 }
 function LM-Explorer {
-    LM-Stage 'PROCESS EXPLORER - MICROSOFT ORIGINAL' 4
+    LM-Stage 'PROCESS EXPLORER - MICROSOFT ORIGINAL' 6
     LM-Line '  Inspecao visual opcional com ferramenta oficial da Microsoft.' Gray
     if ($SkipProcessExplorer -or $NoPause) { LM-Line '  [INFO] Process Explorer ignorado nesta execucao.' Gray; return }
     $answer = Read-Host '  Baixar e abrir o Process Explorer da Microsoft? (S/N)'
@@ -460,6 +596,8 @@ LM-CheckDefender
 LM-Progress 68 'Registro e processos'
 LM-CheckRegistry
 LM-CheckProcesses
+LM-CheckProcessIdentity
+LM-CheckEventLogHistory
 LM-Progress 82 'Analise de arquivos'
 LM-SelectLocalFiles
 LM-Progress 91 'Eventos de processos'
@@ -474,6 +612,7 @@ LM-Line '  [VERMELHO] = INDICIO PARA REVISAR; NAO SIGNIFICA CHEAT CONFIRMADO.' R
 LM-Line '  Metadados nao revelam automaticamente se um programa e external ou executor.' DarkYellow
 LM-Line '  Nenhum percentual representa um computador livre de cheats.' DarkYellow
 LM-Explorer
+LM-WatchProcesses
 LM-Export
 LM-Line ''
 LM-Line '  [INFO] Para concluir o T1, execute tambem o REGISTRY CHECK.' Cyan
