@@ -1504,12 +1504,12 @@ Write-Host ""
 $logFile = Join-Path $env:ProgramData 'lostmedia_t1_security_events.log'
 try {
     if (-not (Test-Path $logFile)) { New-Item -Path $logFile -ItemType File -Force | Out-Null }
-    Write-MonitorAlert -Message "LostMedia T1 Recording (LOC base v$($script:LocTier1Version)) monitor started" -LogFile $logFile
+    Write-MonitorAlert -Message "LostMedia T1 Recording monitor started" -LogFile $logFile
 } catch {
     $logFile = Join-Path $env:TEMP 'lostmedia_t1_security_events.log'
     if (-not (Test-Path $logFile)) { New-Item -Path $logFile -ItemType File -Force | Out-Null }
     Write-Host "WARNING: Logging to $logFile" -ForegroundColor Yellow
-    Write-MonitorAlert -Message "LostMedia T1 Recording (LOC base v$($script:LocTier1Version)) monitor started" -LogFile $logFile
+    Write-MonitorAlert -Message "LostMedia T1 Recording monitor started" -LogFile $logFile
 }
 
 Register-WmiEvent -Class Win32_VolumeChangeEvent -SourceIdentifier USBChange | Out-Null
