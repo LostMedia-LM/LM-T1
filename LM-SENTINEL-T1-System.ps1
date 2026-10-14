@@ -13,7 +13,7 @@ foreach ($__n in @(
 
 Clear-Host
 
-$script:LostTier1Version = '1.8.0'
+$script:LostMediatier1Version = '1.7.0'
 
 function Disable-ConsoleQuickEdit {
     try {
@@ -95,35 +95,29 @@ function Add-RegistryKeyFingerprint {
     }
 }
 
-# -----------------------------------------------------------
-# LOSTMEDIA T1 RECORDING | MVS LostMedia
-# Creditos: Mangak 
-# -----------------------------------------------------------
-Write-Host '  #      ###   #### ##### #   # ##### ####  #####  ###' -ForegroundColor Cyan
-Write-Host '  #     #   # #       #   ## ## #     #   #   #   #   #' -ForegroundColor Cyan
-Write-Host '  #     #   # #       #   # # # #     #   #   #   #   #' -ForegroundColor Cyan
-Write-Host '  #     #   #  ###    #   #   # ####  #   #   #   #####' -ForegroundColor Cyan
-Write-Host '  #     #   #     #   #   #   # #     #   #   #   #   #' -ForegroundColor Cyan
-Write-Host '  #     #   #     #   #   #   # #     #   #   #   #   #' -ForegroundColor Cyan
-Write-Host '  #####  ###  ####    #   #   # ##### ####  ##### #   #' -ForegroundColor Cyan
+# LOST MEDIA T1 RECORDING - INTERFACE
+# Creditos: Mangak. 
+$lmArt = @'
+
+  _     ___  ____ _____   __  __ _____ ____ ___    _
+ | |   / _ \/ ___|_   _| |  \/  | ____|  _ \_ _|  / \
+ | |  | | | \___ \ | |   | |\/| |  _| | | | | | / _ \
+ | |__| |_| |___) || |   | |  | | |___| |_| | |/ ___ \
+ |_____\___/|____/ |_|   |_|  |_|_____|____/___/_/   \_\
+
+'@
+Write-Host $lmArt -ForegroundColor Cyan
+Write-Host '  +--------------------------------------------------------------+' -ForegroundColor DarkCyan
+Write-Host '  |  T1 RECORDING                   JUSTICE DEPARTMENT / LM     |' -ForegroundColor White
+Write-Host '  +--------------------------------------------------------------+' -ForegroundColor DarkCyan
+Write-Host '  System Check  /  Process Explorer  /  Live Monitor' -ForegroundColor Gray
 Write-Host ''
-Write-Host '  #####   #         ####  #####  ####  ###  ####  ####  ##### #   #  ####' -ForegroundColor DarkCyan
-Write-Host '    #    ##         #   # #     #     #   # #   # #   #   #   ##  # #' -ForegroundColor DarkCyan
-Write-Host '    #     #         #   # #     #     #   # #   # #   #   #   # # # #' -ForegroundColor DarkCyan
-Write-Host '    #     #         ####  ####  #     #   # ####  #   #   #   #  ## #  ##' -ForegroundColor DarkCyan
-Write-Host '    #     #         # #   #     #     #   # # #   #   #   #   #   # #   #' -ForegroundColor DarkCyan
-Write-Host '    #     #         #  #  #     #     #   # #  #  #   #   #   #   # #   #' -ForegroundColor DarkCyan
-Write-Host '    #   #####       #   # #####  ####  ###  #   # ####  ##### #   #  ####' -ForegroundColor DarkCyan
+Write-Host '  DISCORD SERVERS' -ForegroundColor Cyan
+Write-Host '  Justice Department : discord.gg/gsdQbYFP79' -ForegroundColor White
+Write-Host '  LM Oficial         : discord.gg/2gP6MaKURK' -ForegroundColor White
 Write-Host ''
-Write-Host '  === LOSTMEDIA T1 RECORDING ===' -ForegroundColor White
-Write-Host '  System Check / Process Explorer / Live Monitor' -ForegroundColor Gray
-Write-Host ''
-Write-Host '  === DISCORD SERVERS ===' -ForegroundColor Cyan
-Write-Host '  Justice Department: https://discord.gg/gsdQbYFP79' -ForegroundColor White
-Write-Host '  LM oficial:         https://discord.gg/2gP6MaKURK' -ForegroundColor White
-Write-Host ''
-Write-Host '  === CREDITS ===' -ForegroundColor Cyan
-Write-Host '  Mangak             - Personalizacao Lost Media' -ForegroundColor Gray
+Write-Host '  CREDITS' -ForegroundColor Cyan
+Write-Host '  Mangak       - Identidade visual Lost Media' -ForegroundColor Gray
 Write-Host ''
 
 if (-not (Test-Admin)) {
