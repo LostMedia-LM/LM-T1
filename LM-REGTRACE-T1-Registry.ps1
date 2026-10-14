@@ -1,134 +1,161 @@
 #requires -Version 5.1
 <#
-MVS Lost Media - REGTRACE T1 / Registry Audit (2 of 2)
-Read-only checks. Does not change Windows Registry or security settings.
-Summarizes counts only for Defender exclusions; never includes private file paths.
-Run with: & '.\LM-REGTRACE-T1-Registry.ps1'
-Optional: -NoPause
+MVS LOST MEDIA | T1 REGISTRY CHECK 3.4
+Independent second verification for Windows PowerShell 5.1.
+Read-only: does not change registry values, Defender settings, services,
+files, or Windows execution policies. No network calls or automatic uploads.
+Exclusion counts only: private paths and filenames are not stored.
 #>
 [CmdletBinding()]
 param([switch]$NoPause)
 
 $ErrorActionPreference = 'Continue'
 $script:Findings = New-Object 'System.Collections.Generic.List[object]'
-$script:Index = 0
+$script:Transcript = New-Object 'System.Collections.Generic.List[string]'
 $script:Session = ([guid]::NewGuid().ToString('N').Substring(0,8)).ToUpperInvariant()
 $script:Stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+$script:Index = 0
 
-function PrintLine([string]$Text, [ConsoleColor]$Color = [ConsoleColor]::Gray) { Write-Host $Text -ForegroundColor $Color }
-function Header([string]$Label) {
-    Write-Host ''
-    PrintLine ('  --- ' + $Label.ToUpperInvariant() + ' ' + ('-' * [Math]::Max(1, 52 - $Label.Length))) Magenta
+function LM-Text([string]$Message = '', [ConsoleColor]$Color = [ConsoleColor]::Gray) {
+    Write-Host $Message -ForegroundColor $Color
+    [void]$script:Transcript.Add($Message)
 }
-function AddFinding([string]$Area, [string]$Status, [string]$Detail) {
+function LM-Banner {
+    try { $Host.UI.RawUI.WindowTitle = 'LM / TIER ONE - REGISTRY CHECK - MVS LOST MEDIA' } catch { }
+    Clear-Host
+    LM-Text ('  +' + ('-' * 68) + '+') DarkCyan
+    LM-Text ('  | ' + 'LM // TIER ONE'.PadRight(66) + ' |') Cyan
+    LM-Text ('  |' + ('-' * 68) + '|') DarkCyan
+    LM-Text ('  | ' + '        _       __  __'.PadRight(66) + ' |') Cyan
+    LM-Text ('  | ' + '       | |     |  \/  |'.PadRight(66) + ' |') Cyan
+    LM-Text ('  | ' + '       | |     | |\/| |   M V S   /   L O S T   M E D I A'.PadRight(66) + ' |') Cyan
+    LM-Text ('  | ' + '       | |___  | |  | |   REGISTRY / DEFENDER / REVIEW'.PadRight(66) + ' |') White
+    LM-Text ('  | ' + '       |_____| |_|  |_|'.PadRight(66) + ' |') Cyan
+    LM-Text ('  |' + ('-' * 68) + '|') DarkCyan
+    LM-Text ('  | ' + ('MODE: REGISTRY CHECK    BUILD 3.4    SESSION: '+$script:Session).PadRight(66) + ' |') Magenta
+    LM-Text ('  +' + ('-' * 68) + '+') DarkCyan
+    LM-Text '  [LOCAL CHECK] Somente leitura // Sem envio de dados' DarkGray
+    LM-Text '  [NOTICE] Ausencia de alertas nao comprova ausencia de cheats.' DarkYellow
+}
+function LM-Stage([int]$Number, [string]$Name) {
+    LM-Text ''
+    LM-Text ('  <<  {0:00}  /  {1}' -f $Number, $Name.ToUpperInvariant()) Magenta
+    LM-Text ('  ' + ('-' * 68)) DarkCyan
+}
+function LM-Progress([int]$Percent, [string]$Message) {
+    $blocks=[Math]::Max(0,[Math]::Min(24,[int][Math]::Floor($Percent*24/100)))
+    Write-Host ("`r  LM-SCAN [{0}{1}] {2,3}%  //  {3}      " -f ('='*$blocks),('.'*(24-$blocks)),$Percent,$Message) -ForegroundColor Cyan -NoNewline
+    if($Percent -ge 100){ Write-Host '' }
+}
+function LM-Item([string]$Caption, [string]$Status, [string]$Detail) {
     $script:Index++
-    $color = switch ($Status) {
-        'OK'     { [ConsoleColor]::Green }
-        'REVIEW' { [ConsoleColor]::Yellow }
-        default  { [ConsoleColor]::DarkGray }
-    }
-    Write-Host ('  {0:00}  ' -f $script:Index) -NoNewline -ForegroundColor DarkGray
-    Write-Host ('[{0,-6}]' -f $Status) -NoNewline -ForegroundColor $color
-    PrintLine (' ' + $Area + '  -  ' + $Detail)
-    $script:Findings.Add([pscustomobject]@{ Section=$Area; Status=$Status; Detail=$Detail })
+    $color=switch ($Status) { 'OK' {'Green'} 'REVIEW' {'Yellow'} 'UNVERIFIED' {'DarkYellow'} default {'Gray'} }
+    LM-Text ('  {0:00}  [{1,-10}] {2} // {3}' -f $script:Index,$Status,$Caption,$Detail) $color
+    [void]$script:Findings.Add([pscustomobject]@{Status=$Status;Caption=$Caption;Detail=$Detail})
 }
-function ReadRegValue([string]$Key, [string]$Name) {
-    if (-not (Test-Path -LiteralPath $Key)) { return [pscustomobject]@{ HasValue=$false; Readable=$true; Value=$null } }
+function LM-RegistryValue([string]$Path, [string]$Name) {
     try {
-        $val = Get-ItemPropertyValue -LiteralPath $Key -Name $Name -ErrorAction Stop
-        return [pscustomobject]@{ HasValue=$true; Readable=$true; Value=$val }
-    } catch {
-        # Distinguish absent value from access-denied when possible.
-        try {
-            $keyObj = Get-Item -LiteralPath $Key -ErrorAction Stop
-            if ($keyObj.GetValueNames() -notcontains $Name) {
-                return [pscustomobject]@{ HasValue=$false; Readable=$true; Value=$null }
-            }
-        } catch { }
-        return [pscustomobject]@{ HasValue=$false; Readable=$false; Value=$null }
-    }
+        if(-not (Test-Path -LiteralPath $Path -ErrorAction Stop)) { return [pscustomobject]@{State='Missing';Value=$null} }
+        $item=Get-Item -LiteralPath $Path -ErrorAction Stop
+        if(@($item.GetValueNames()) -notcontains $Name) { return [pscustomobject]@{State='Missing';Value=$null} }
+        $value=Get-ItemPropertyValue -LiteralPath $Path -Name $Name -ErrorAction Stop
+        return [pscustomobject]@{State='Found';Value=$value}
+    } catch { return [pscustomobject]@{State='Unavailable';Value=$null} }
 }
-function CheckDisablePolicy([string]$Caption, [string]$Key, [string]$Name) {
-    $value = ReadRegValue $Key $Name
-    if (-not $value.Readable) { AddFinding $Caption 'INFO' 'Valor inacessivel; verificacao inconclusiva.' }
-    elseif (-not $value.HasValue) { AddFinding $Caption 'INFO' 'Politica nao definida neste caminho (nao significa falha).' }
-    elseif ([string]$value.Value -eq '1') { AddFinding $Caption 'REVIEW' 'Politica configurada com valor 1; conferir se ha outra protecao vigente.' }
-    else { AddFinding $Caption 'OK' ('Politica definida com valor ' + $value.Value + '.') }
+function LM-DisabledPolicy([string]$Name,[string]$Path,[string]$Property) {
+    $r=LM-RegistryValue $Path $Property
+    if($r.State -eq 'Unavailable') { LM-Item $Name 'UNVERIFIED' 'Registro inacessivel.'; return }
+    if($r.State -eq 'Missing') { LM-Item $Name 'INFO' 'Politica nao definida neste local.'; return }
+    if([string]$r.Value -eq '1') { LM-Item $Name 'REVIEW' 'Politica com valor 1; verificar configuracao efetiva.' }
+    else { LM-Item $Name 'INFO' ('Valor definido: '+$r.Value+'. Conferir politica efetiva.') }
 }
-function CheckOptionalEnabled([string]$Caption, [string]$Key, [string]$Name) {
-    $value = ReadRegValue $Key $Name
-    if (-not $value.Readable) { AddFinding $Caption 'INFO' 'Leitura indisponivel.' }
-    elseif (-not $value.HasValue) { AddFinding $Caption 'INFO' 'Valor nao definido neste caminho.' }
-    elseif ([string]$value.Value -eq '1') { AddFinding $Caption 'OK' 'Configuracao habilitada.' }
-    else { AddFinding $Caption 'INFO' 'Configuracao nao indicada como habilitada; nao comprova cheat.' }
+function LM-EnabledSetting([string]$Name,[string]$Path,[string]$Property) {
+    $r=LM-RegistryValue $Path $Property
+    if($r.State -eq 'Unavailable') { LM-Item $Name 'UNVERIFIED' 'Registro inacessivel.'; return }
+    if($r.State -eq 'Missing') { LM-Item $Name 'INFO' 'Valor nao encontrado; estado nao conclusivo.'; return }
+    if([string]$r.Value -eq '1') { LM-Item $Name 'OK' 'Valor 1 informado (configuracao declarada).' }
+    else { LM-Item $Name 'INFO' ('Valor '+$r.Value+'; conferir estado efetivo no Windows.') }
+}
+function LM-SaveReports {
+    try {
+        $docs=[Environment]::GetFolderPath('MyDocuments')
+        if([string]::IsNullOrWhiteSpace($docs)) { $docs=Join-Path $env:USERPROFILE 'Documents' }
+        $dir=Join-Path $docs 'MVS-Lost-Media-T1'
+        if(-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop) }
+        $root='LM-T1-'+$script:Session+'-REGISTRY'
+        $fullPath=Join-Path $dir ($root+'.txt')
+        $discordPath=Join-Path $dir ($root+'-DISCORD.txt')
+        $script:Transcript.ToArray() | Set-Content -LiteralPath $fullPath -Encoding UTF8 -ErrorAction Stop
+        $ok=@($script:Findings | Where-Object {$_.Status -eq 'OK'}).Count
+        $review=@($script:Findings | Where-Object {$_.Status -eq 'REVIEW'}).Count
+        $unverified=@($script:Findings | Where-Object {$_.Status -eq 'UNVERIFIED'}).Count
+        $info=@($script:Findings | Where-Object {$_.Status -eq 'INFO'}).Count
+        $discord=@('**MVS LOST MEDIA | T1 REGISTRY CHECK 3.4**',('Sessao: `'+$script:Session+'`'),"OK: $ok | Revisao: $review | Nao verificado: $unverified | Info: $info",'```')
+        $discord+=@($script:Findings | ForEach-Object { '[{0}] {1}: {2}' -f $_.Status,$_.Caption,$_.Detail })
+        $discord+=@('```','Este relatorio nao confirma nem exclui a presenca de cheats.')
+        $discord | Set-Content -LiteralPath $discordPath -Encoding UTF8 -ErrorAction Stop
+        LM-Text ('  [LOG] '+$fullPath) Green
+        LM-Text ('  [TICKET] '+$discordPath) Green
+    } catch { LM-Text ('  [UNVERIFIED] Nao foi possivel salvar os relatorios: '+$_.Exception.Message) DarkYellow }
+}
+function LM-End {
+    LM-Text ''
+    LM-Text ('  +' + ('-' * 68) + '+') DarkCyan
+    LM-Text ('  | ' + 'REGISTRY CHECK FINALIZADO  //  MVS LOST MEDIA'.PadRight(66) + ' |') Cyan
+    LM-Text ('  | ' + 'Inspecao encerrada. Consulte os relatorios locais.'.PadRight(66) + ' |') Gray
+    LM-Text ('  +' + ('-' * 68) + '+') DarkCyan
+    if($NoPause) { return }
+    Write-Host ''
+    Write-Host '  >> Pressione QUALQUER TECLA para fechar...' -ForegroundColor Magenta
+    try {
+        if([Console]::IsInputRedirected) { [void](Read-Host '  Pressione ENTER') }
+        else { [void][Console]::ReadKey($true) }
+    } catch { [void](Read-Host '  Pressione ENTER') }
+    exit
 }
 
-Clear-Host
-PrintLine '  +------------------------------------------------------------------+' DarkMagenta
-PrintLine '  |   MVS / LOST MEDIA                                        T1:02  |' Magenta
-PrintLine '  |   R E G T R A C E                                                |' White
-PrintLine '  |   REGISTRY INSPECTION                            BUILD  1.0     |' DarkMagenta
-PrintLine '  +------------------------------------------------------------------+' DarkMagenta
-PrintLine ('  SESSION  {0}       {1}' -f $script:Session, $script:Stamp) Gray
-PrintLine '  READ-ONLY | SOMENTE CONTAGENS DE EXCLUSOES | SEM ENVIO DE DADOS' DarkGray
-
-Header 'Exclusoes Microsoft Defender'
+LM-Banner
+LM-Stage 1 'Exclusoes Microsoft Defender'
+LM-Progress 15 'Consultando Defender'
 try {
-    $pref = Get-MpPreference -ErrorAction Stop
-    foreach ($spec in @(
-        @{Label='Arquivos/pastas'; Field='ExclusionPath'},
-        @{Label='Processos'; Field='ExclusionProcess'},
-        @{Label='Extensoes'; Field='ExclusionExtension'},
-        @{Label='IPs'; Field='ExclusionIpAddress'}
+    $pref=Get-MpPreference -ErrorAction Stop
+    foreach($spec in @(
+        @{Name='Pastas';Key='ExclusionPath'},
+        @{Name='Processos';Key='ExclusionProcess'},
+        @{Name='Extensoes';Key='ExclusionExtension'},
+        @{Name='IPs';Key='ExclusionIpAddress'}
     )) {
-        $values = @($pref.($spec.Field) | Where-Object { $null -ne $_ -and "$_".Length -gt 0 })
-        if ($values.Count -gt 0) { AddFinding ('Exclusoes: ' + $spec.Label) 'REVIEW' ("$($values.Count) entrada(s); nomes e caminhos nao sao armazenados.") }
-        else { AddFinding ('Exclusoes: ' + $spec.Label) 'OK' 'Nenhuma entrada retornada pela consulta.' }
+        $list=@($pref.($spec.Key) | Where-Object { $null -ne $_ -and ([string]$_).Length -gt 0 })
+        if($list.Count -gt 0) { LM-Item ('Exclusoes '+$spec.Name) 'REVIEW' ("$($list.Count) entrada(s). Valores e caminhos nao sao armazenados.") }
+        else { LM-Item ('Exclusoes '+$spec.Name) 'OK' 'Nenhuma exclusao retornada pela consulta.' }
     }
-} catch { AddFinding 'Exclusoes Defender' 'INFO' 'Get-MpPreference indisponivel; nao assumir que esta vazio.' }
-
-Header 'Politicas de protecao'
-$policyRoot = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
-CheckDisablePolicy 'Desativar antivirus (politica)' $policyRoot 'DisableAntiSpyware'
-$rt = Join-Path $policyRoot 'Real-Time Protection'
-CheckDisablePolicy 'Desativar monitoramento real' $rt 'DisableRealtimeMonitoring'
-CheckDisablePolicy 'Desativar comportamento' $rt 'DisableBehaviorMonitoring'
-CheckDisablePolicy 'Desativar acesso a arquivos' $rt 'DisableOnAccessProtection'
-CheckDisablePolicy 'Desativar downloads/arquivos' $rt 'DisableIOAVProtection'
-
-Header 'Integridade e configuracoes do sistema'
-CheckOptionalEnabled 'UAC (EnableLUA)' 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'EnableLUA'
-CheckOptionalEnabled 'Integridade de memoria (registro)' 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'
-CheckOptionalEnabled 'Bloqueio de drivers vulneraveis' 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config' 'VulnerableDriverBlocklistEnable'
-
+} catch { LM-Item 'Exclusoes Defender' 'UNVERIFIED' 'Consulta indisponivel; ausencia nao comprovada.' }
+LM-Progress 45 'Politicas do Windows'
+LM-Stage 2 'Politicas Microsoft Defender'
+$root='HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
+LM-DisabledPolicy 'Antivirus: politica' $root 'DisableAntiSpyware'
+$rt=Join-Path $root 'Real-Time Protection'
+LM-DisabledPolicy 'Monitoramento em tempo real' $rt 'DisableRealtimeMonitoring'
+LM-DisabledPolicy 'Monitoramento de comportamento' $rt 'DisableBehaviorMonitoring'
+LM-DisabledPolicy 'Protecao de arquivos' $rt 'DisableOnAccessProtection'
+LM-DisabledPolicy 'Inspecao de downloads' $rt 'DisableIOAVProtection'
+LM-Progress 75 'Integridade de seguranca'
+LM-Stage 3 'Controles e isolamento'
+LM-EnabledSetting 'UAC' 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' 'EnableLUA'
+LM-EnabledSetting 'Integridade de memoria' 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'
+LM-EnabledSetting 'Bloqueio de drivers' 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config' 'VulnerableDriverBlocklistEnable'
 try {
-    $digest = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256 -ErrorAction Stop).Hash
-    AddFinding 'SHA-256 do script' 'INFO' $digest
-} catch { AddFinding 'SHA-256 do script' 'INFO' 'Hash indisponivel.' }
-
-Header 'Resultado e relatorios'
-$reviewCount = @($script:Findings | Where-Object { $_.Status -eq 'REVIEW' }).Count
-$okCount = @($script:Findings | Where-Object { $_.Status -eq 'OK' }).Count
-$infoCount = @($script:Findings | Where-Object { $_.Status -eq 'INFO' }).Count
-PrintLine ("  OK: $okCount   REVIEW: $reviewCount   INFO: $infoCount") White
-PrintLine '  Ausencia de alertas NAO prova ausencia de cheats.' Yellow
-try {
-    $doc = [Environment]::GetFolderPath('MyDocuments')
-    if ([string]::IsNullOrWhiteSpace($doc)) { throw 'Pasta Documentos indisponivel.' }
-    $dir = Join-Path $doc 'MVS-Lost-Media-T1'
-    New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
-    $prefix = 'REGTRACE-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + $script:Session
-    $fullPath = Join-Path $dir ($prefix + '.txt')
-    $discordPath = Join-Path $dir ($prefix + '-DISCORD.txt')
-    $lines = @('MVS LOST MEDIA - REGTRACE / T1:02','Sessao: ' + $script:Session,'Data local: ' + $script:Stamp,'Modo: somente leitura','')
-    $lines += $script:Findings | ForEach-Object { '[{0}] {1}: {2}' -f $_.Status, $_.Section, $_.Detail }
-    $lines += @('',"RESUMO: OK=$okCount | REVIEW=$reviewCount | INFO=$infoCount",'Sem diagnostico automatico de cheat.')
-    $lines | Set-Content -LiteralPath $fullPath -Encoding UTF8 -ErrorAction Stop
-    $discord = @('**MVS LOST MEDIA | REGTRACE T1:02**','Sessao: `' + $script:Session + '`',"OK: **$okCount** | Revisao: **$reviewCount** | Info: **$infoCount**",'Resultado: revisao manual necessaria; nao constitui prova de cheat.')
-    $discord | Set-Content -LiteralPath $discordPath -Encoding UTF8 -ErrorAction Stop
-    PrintLine ('  Relatorio: ' + $fullPath) Magenta
-    PrintLine ('  Texto Discord: ' + $discordPath) Magenta
-} catch { PrintLine ('  Falha ao salvar relatorio: ' + $_.Exception.Message) Yellow }
-
-PrintLine '  FINALIZADO | MVS LOST MEDIA' DarkMagenta
-if (-not $NoPause) { Write-Host ''; [void](Read-Host '  Pressione ENTER para fechar') }
+    if([string]::IsNullOrWhiteSpace($PSCommandPath)) { throw 'Arquivo de script nao identificado (execucao em memoria).' }
+    $sha=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256 -ErrorAction Stop).Hash
+    LM-Item 'SHA256 do verificador' 'INFO' $sha
+} catch { LM-Item 'SHA256 do verificador' 'UNVERIFIED' 'Nao disponivel nesta modalidade de execucao.' }
+LM-Progress 100 'Registry Check concluido'
+$ok=@($script:Findings | Where-Object {$_.Status -eq 'OK'}).Count
+$review=@($script:Findings | Where-Object {$_.Status -eq 'REVIEW'}).Count
+$unverified=@($script:Findings | Where-Object {$_.Status -eq 'UNVERIFIED'}).Count
+$info=@($script:Findings | Where-Object {$_.Status -eq 'INFO'}).Count
+LM-Stage 4 'Resumo da auditoria'
+LM-Text ('  [RESULTADO] OK: '+$ok+' | REVIEW: '+$review+' | NAO VERIFICADO: '+$unverified+' | INFO: '+$info) Cyan
+LM-Text '  Resultados exigem contexto. Nenhum resultado comprova cheats.' DarkYellow
+LM-SaveReports
+LM-End
