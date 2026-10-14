@@ -117,7 +117,6 @@ Write-Host '    #   #####       #   # #####  ####  ###  #   # ####  ##### #   # 
 Write-Host ''
 Write-Host '  === LOSTMEDIA T1 RECORDING ===' -ForegroundColor White
 Write-Host '  System Check / Process Explorer / Live Monitor' -ForegroundColor Gray
-Write-Host "  Base tecnica: LOC Tier 1 v$($script:LocTier1Version)" -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '  === DISCORD SERVERS ===' -ForegroundColor Cyan
 Write-Host '  Justice Department: https://discord.gg/gsdQbYFP79' -ForegroundColor White
@@ -125,9 +124,6 @@ Write-Host '  LM oficial:         https://discord.gg/2gP6MaKURK' -ForegroundColo
 Write-Host ''
 Write-Host '  === CREDITS ===' -ForegroundColor Cyan
 Write-Host '  Mangak             - Personalizacao Lost Media' -ForegroundColor Gray
-Write-Host '  @mortrunsloc       - Publicacao da base LOC no Gist' -ForegroundColor Gray
-Write-Host '  @ravenader1        - Credito exibido no exemplo visual ETA' -ForegroundColor DarkGray
-Write-Host '  @cyberthreats      - Credito exibido no exemplo visual ETA' -ForegroundColor DarkGray
 Write-Host ''
 
 if (-not (Test-Admin)) {
