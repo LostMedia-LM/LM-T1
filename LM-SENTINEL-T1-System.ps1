@@ -1,33 +1,59 @@
-#requires -Version 5.1
-<#
-MVS Lost Media - Launcher da LOC original (terceiros)
-Autor do script original: mortrunsloc
-Este arquivo NAO contem nem modifica o codigo da LOC.
-Ele apenas solicita confirmacao antes de executar a revisao especifica
-publicada pelo autor na URL abaixo.
-A LOC realiza verificacoes locais e pode abrir utilitarios externos.
-Execute somente em seu proprio computador ou com autorizacao expressa.
+
 #>
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Mandatory=$true)] [string]$ArquivoOriginal,
+    [string]$Saida = '.\LostMedia-T1-Recording.ps1'
+)
 $ErrorActionPreference = 'Stop'
-$locUrl = 'https://gist.githubusercontent.com/mortrunsloc/eb10fe14a0aada7072ecf3fe2a1091e1/raw/6afd1f5a70b774a93caa289ad1017205c5ce3e18/gistfile1.txt'
-Write-Host 'MVS LOST MEDIA - LOC ORIGINAL' -ForegroundColor Cyan
-Write-Host 'Fonte: mortrunsloc / GitHub Gist' -ForegroundColor Gray
-Write-Host 'Este iniciador executa a LOC original sem qualquer modificacao.' -ForegroundColor Yellow
-Write-Host 'O script de terceiros pode inspecionar o sistema, abrir programas e manter monitoramento.' -ForegroundColor Yellow
-Write-Host 'Verifique a fonte e execute apenas em PCs autorizados.' -ForegroundColor Yellow
-$answer = Read-Host 'Executar a LOC original? (S/N)'
-if ($answer -notmatch '^(?i:s|sim)$') {
-    Write-Host 'Cancelado.' -ForegroundColor Gray
-    return
+$entrada = (Resolve-Path -LiteralPath $ArquivoOriginal).Path
+$codigo = [IO.File]::ReadAllText($entrada)
+$inicioMarcador = 'Write-Host "   __   ____'
+$fimMarcador = 'if (-not (Test-Admin)) {'
+$inicio = $codigo.IndexOf($inicioMarcador, [StringComparison]::Ordinal)
+if ($inicio -lt 0) { throw 'Banner esperado nao encontrado. Confira se escolheu o codigo LOC fornecido nesta conversa.' }
+$fim = $codigo.IndexOf($fimMarcador, $inicio, [StringComparison]::Ordinal)
+if ($fim -lt 0) { throw 'Fim do banner nao encontrado. Nao alterei o arquivo.' }
+
+$novoBanner = @'
+$lmArt = @"
+  #      ###   #### ##### #   # ##### ####  #####   #  
+  #     #   # #       #   ## ## #     #   #   #    # # 
+  #     #   #  ###    #   # # # ####  #   #   #   #####
+  #     #   #     #   #   #   # #     #   #   #   #   #
+  #####  ###  ####    #   #   # ##### ####  ##### #   #
+
+  #####   #         ####  #####  ####  ###  ####  ####  ##### #   #  ####
+    #    ##         #   # #     #     #   # #   # #   #   #   ##  # #    
+    #     #         ####  ####  #     #   # ####  #   #   #   # # # # ###
+    #     #         #  #  #     #     #   # #  #  #   #   #   #  ## #   #
+    #   #####       #   # #####  ####  ###  #   # ####  ##### #   #  ####
+"@
+Write-Host $lmArt -ForegroundColor Cyan
+Write-Host ''
+Write-Host '  LOSTMEDIA T1 RECORDING' -ForegroundColor White
+Write-Host "  Base tecnica: LOC Tier 1 v$($script:LocTier1Version)" -ForegroundColor DarkGray
+Write-Host '  Etapas: System Check / Process Explorer / Live Monitor' -ForegroundColor Gray
+Write-Host ''
+Write-Host '  === Discord Servers ===' -ForegroundColor Cyan
+Write-Host '  Justice Department: https://discord.gg/gsdQbYFP79' -ForegroundColor White
+Write-Host '  LM oficial:         https://discord.gg/2gP6MaKURK' -ForegroundColor White
+Write-Host ''
+Write-Host '  === Credits ===' -ForegroundColor Cyan
+Write-Host '  Personalizacao e comunidade: Mangak' -ForegroundColor White
+Write-Host '  Codigo-base e verificacoes: autores originais da LOC' -ForegroundColor White
+Write-Host ''
+'@
+
+$codigo = $codigo.Substring(0, $inicio) + $novoBanner + "`r`n" + $codigo.Substring($fim)
+$codigo = $codigo.Replace('LOC Tier 1 v$($script:LocTier1Version) monitor started', 'LostMedia T1 Recording v$($script:LocTier1Version) monitor started')
+$codigo = $codigo.Replace('loc_tier1_security_events.log', 'lostmedia_t1_security_events.log')
+
+$destino = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Saida)
+if ([IO.Path]::GetFullPath($entrada) -eq [IO.Path]::GetFullPath($destino)) {
+    throw 'Escolha um arquivo de saida diferente do original.'
 }
-try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $source = (Invoke-WebRequest -Uri $locUrl -UseBasicParsing -ErrorAction Stop).Content
-    if ([string]::IsNullOrWhiteSpace($source)) { throw 'O conteudo da LOC esta vazio.' }
-    Invoke-Expression $source
-} catch {
-    Write-Host ('Falha ao executar a LOC original: ' + $_.Exception.Message) -ForegroundColor Red
-    throw
-}
+[IO.File]::WriteAllText($destino, $codigo, ([System.Text.UTF8Encoding]::new($true)))
+Write-Host "Arquivo personalizado criado: $destino" -ForegroundColor Green
+Write-Host 'As verificacoes tecnicas permanecem as do arquivo de entrada.' -ForegroundColor Yellow
+Write-Host 'Para publicar no GitHub, verifique primeiro os direitos de redistribuicao da LOC.' -ForegroundColor Yellow
