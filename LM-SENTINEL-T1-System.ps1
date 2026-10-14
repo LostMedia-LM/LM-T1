@@ -38,7 +38,7 @@ function LM-Banner([string]$Phase, [string]$Code) {
     LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.7.0    SESSION: '+$Code).PadRight(66) + ' |') Magenta
     LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
     LM-Line '  [LOCAL CHECK] Somente leitura // Sem envio de relatorios' DarkGray
-    LM-Line '  [NOTICE] Alertas sao triagem tecnica, nao veredito nem prova de cheat.' DarkYellow
+    LM-Line '  [AVISO] Arquivos suspeitos sao destacados para revisao.' DarkYellow
 }
 function LM-Ending([string]$Phase) {
     LM-Line ''
@@ -178,7 +178,7 @@ function LM-CheckProtections {
     try {
         $hvci=Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard -ErrorAction Stop
         if (@($hvci.SecurityServicesRunning) -contains 2) { LM-Item 'SEGURANCA' 'Integridade de memoria' 'OK' 'HVCI informado como em execucao.' }
-        else { LM-Item 'SEGURANCA' 'Integridade de memoria' 'INFO' 'HVCI nao informado como em execucao; nao e prova de cheat.' }
+        else { LM-Item 'SEGURANCA' 'Integridade de memoria' 'INFO' 'HVCI nao informado como em execucao.' }
     } catch { LM-Item 'SEGURANCA' 'Integridade de memoria' 'UNVERIFIED' 'Consulta nao disponivel.' }
 }
 function LM-CheckDefender {
@@ -259,12 +259,12 @@ function LM-InspectFile([string]$FullPath, [string]$Origin) {
             # Nao atribuir alerta vermelho somente pela ausencia de assinatura.
             $status='ATENCAO'
             if ($location -eq 'Pasta do usuario') {
-                [void]$reasons.Add('sem assinatura + pasta do usuario (comum em aplicativos legitimos)')
+                [void]$reasons.Add('sem assinatura digital; pasta do usuario')
             } else {
-                [void]$reasons.Add('sem assinatura digital (nao significa cheat)')
+                [void]$reasons.Add('sem assinatura digital')
             }
         } elseif ($signature -eq 'Valid') {
-            [void]$reasons.Add('assinatura valida (nao garante seguranca)')
+            [void]$reasons.Add('assinatura digital valida')
         } else {
             $status='UNVERIFIED'
             [void]$reasons.Add('assinatura nao verificada: '+$signature)
@@ -281,7 +281,8 @@ function LM-InspectFile([string]$FullPath, [string]$Origin) {
             Signature=$signature; Location=$location; SHA256=$sha }
         [void]$script:Observations.Add($row)
         if ($status -in @('REVIEW','ATENCAO') -or $Origin -eq 'SELECIONADO') {
-            LM-Item 'ARQUIVOS' $name $status ("$Origin | $explain | $location | NAO COMPROVA CHEAT")
+            $alertText = if ($status -eq 'REVIEW') { 'ARQUIVO SUSPEITO' } elseif ($status -eq 'ATENCAO') { 'ARQUIVO EM ATENCAO' } else { 'ARQUIVO ANALISADO' }
+            LM-Item 'ARQUIVOS' $name $status ("$alertText | $Origin | $explain | $location")
             if ($Origin -eq 'SELECIONADO') {
                 LM-Item 'ARQUIVOS' ('Hash: '+$name) 'INFO' ('SHA256='+$sha)
             }
@@ -403,7 +404,7 @@ function LM-SysmonRoblox {
                         $accessStatus = 'ATENCAO'
                     }
                 } else { $accessStatus = 'UNVERIFIED' }
-                LM-Item 'EXTERNALS' $source $accessStatus ("Sysmon 10 | $date | permissoes concedidas $granted ($rights); nao e prova de cheat.")
+                LM-Item 'EXTERNALS' $source $accessStatus ("Sysmon 10 | $date | permissoes concedidas $granted ($rights).")
             } elseif ($evt.Id -eq 8) {
                 LM-Item 'EXECUTORES' $source 'REVIEW' ("Sysmon 8 | $date | thread remota registrada; verificar contexto.")
             } else {
@@ -413,8 +414,8 @@ function LM-SysmonRoblox {
         } catch { continue }
     }
     if ($matching -eq 0) {
-        LM-Item 'EXTERNALS' 'Acessos ao Roblox' 'INFO' 'Nenhum evento correspondente na amostra; nao comprova ausencia.'
-        LM-Item 'EXECUTORES' 'Alteracoes remotas' 'INFO' 'Nenhum evento correspondente na amostra; nao comprova ausencia.'
+        LM-Item 'EXTERNALS' 'Acessos ao Roblox' 'INFO' 'Nenhum evento correspondente na amostra.'
+        LM-Item 'EXECUTORES' 'Alteracoes remotas' 'INFO' 'Nenhum evento correspondente na amostra.'
     }
 }
 function LM-SysmonCoverage {
@@ -469,7 +470,7 @@ function LM-CheckProcessIdentity {
         foreach ($item in @($all | Where-Object { $_.Name -eq 'RobloxPlayerBeta.exe' } | Select-Object -First 3)) {
             $parent = $byId[[string]$item.ParentProcessId]
             $parentName = if ($null -ne $parent) { [string]$parent.Name } else { 'nao disponivel' }
-            LM-Item 'ORIGEM ROBLOX' 'Processo pai' 'INFO' ("Roblox PID $($item.ProcessId) | pai: $parentName | relacao informativa, nao prova cheat")
+            LM-Item 'ORIGEM ROBLOX' 'Processo pai' 'INFO' ("Roblox PID $($item.ProcessId) | pai: $parentName | processo pai identificado")
         }
     } catch {
         LM-Item 'IDENTIDADE' 'Processos do Windows' 'UNVERIFIED' 'Nao foi possivel concluir a consulta de origem.'
@@ -553,7 +554,7 @@ function LM-WatchProcesses {
                 }
             }
         }
-        LM-Item 'MONITOR' 'Novos processos' 'INFO' ("$found instancia(s) vistas em 45 s; nomes comuns nao indicam cheats")
+        LM-Item 'MONITOR' 'Novos processos' 'INFO' ("$found instancia(s) vistas em 45 s; processos observados na janela")
         LM-Item 'MONITOR' 'Limite da coleta' 'INFO' 'Processos muito curtos podem nao ser observados; nao ha monitoramento oculto.'
     } catch {
         LM-Item 'MONITOR' 'Acompanhamento' 'UNVERIFIED' 'Falha na consulta periodica de processos.'
@@ -584,7 +585,8 @@ function LM-Export {
         if ($redRows.Count -eq 0) { [void]$d.Add('Nenhum alerta prioritario observado na amostra.') }
         else {
             foreach ($row in @($redRows | Select-Object -First 5)) {
-                $candidate = ('- '+$row.Label+' ['+$row.Section+']: '+$row.Detail)
+                $displayLabel = if ($row.Section -eq 'ARQUIVOS') { 'ARQUIVO SUSPEITO: '+$row.Label } else { 'SINAL SUSPEITO: '+$row.Label }
+                $candidate = ('- '+$displayLabel+' ['+$row.Section+']: '+$row.Detail)
                 if ($candidate.Length -gt 170) { $candidate = $candidate.Substring(0,167)+'...' }
                 [void]$d.Add($candidate)
             }
@@ -592,7 +594,7 @@ function LM-Export {
         }
         [void]$d.Add('**Limites**')
         if ($unknownRows.Count -gt 0) { [void]$d.Add('Algumas consultas nao puderam ser verificadas.') }
-        [void]$d.Add('Sem prova de cheat, nem certificado de PC limpo. Revisao humana obrigatoria.')
+        [void]$d.Add('Arquivos sinalizados devem passar por revisao humana.')
         $d.ToArray() | Set-Content -LiteralPath $discord -Encoding UTF8 -ErrorAction Stop
         Write-Host ('  [ARQUIVOS] '+$evidence) -ForegroundColor Green
         Write-Host ('  [LOG] '+$out) -ForegroundColor Green
@@ -654,17 +656,17 @@ $attentionRows = @($script:Rows | Where-Object {$_.Status -eq 'ATENCAO'})
 $unverifiedRows = @($script:Rows | Where-Object {$_.Status -eq 'UNVERIFIED'})
 LM-Line ('  [RESULTADO] OK: '+$passed+' | REVIEW: '+$reviewRows.Count+' | ATENCAO: '+$attentionRows.Count+' | NAO VERIFICADO: '+$unverifiedRows.Count) Cyan
 if ($reviewRows.Count -gt 0) {
-    LM-Line '  ITENS PRIORITARIOS PARA REVISAO HUMANA:' Red
+    LM-Line '  ALERTAS SUSPEITOS PARA REVISAO:' Red
     foreach ($finding in @($reviewRows | Select-Object -First 8)) {
-        LM-Line ('  [REVIEW] '+$finding.Label+' / '+$finding.Detail) Red
+        LM-Line ('  [SUSPEITO] '+$finding.Label+' / '+$finding.Detail) Red
     }
     if ($reviewRows.Count -gt 8) { LM-Line '  Outros itens estao disponiveis no relatorio.' Gray }
 } else {
-    LM-Line '  Sem alertas prioritarios nesta amostra; isso NAO significa PC sem cheats.' DarkYellow
+    LM-Line '  Nenhum alerta prioritario identificado na amostra.' Green
 }
-LM-Line '  [AMARELO] Sem assinatura, exclusoes ou caminhos incomuns exigem contexto.' Yellow
-LM-Line '  [VERMELHO] Sinal tecnico para revisar, nunca cheat comprovado.' Red
-LM-Line '  Consultas indisponiveis = NAO VERIFICADO; nenhum teste certifica PC limpo.' DarkYellow
+LM-Line '  [AMARELO] Arquivo ou configuracao em atencao.' Yellow
+LM-Line '  [VERMELHO] Arquivo ou evento suspeito. Verifique o motivo.' Red
+LM-Line '  [CINZA] Consultas indisponiveis = NAO VERIFICADO.' DarkYellow
 LM-Export
 LM-Line ''
 LM-Line '  [INFO] Para concluir o T1, execute tambem o REGISTRY CHECK.' Cyan
