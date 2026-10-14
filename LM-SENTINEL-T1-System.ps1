@@ -1,10 +1,10 @@
 #requires -Version 5.1
 <#
-MVS LOST MEDIA | T1 CHECK 3.2
+MVS LOST MEDIA | T1 SYSTEM CHECK 3.4
 Independent implementation inspired by the categories of the MCL recording checks.
 Read-only security checks; optional official Microsoft Process Explorer download.
 Does not delete files, stop other processes, change registry/security settings,
-or send reports over the network. A local checkpoint supports LM-T1-POSTMATCH.ps1.
+or send reports over the network. The Registry Check is an independent second verification.
 #>
 [CmdletBinding()]
 param([switch]$NoPause, [switch]$SkipProcessExplorer)
@@ -18,6 +18,38 @@ $script:Docs = [Environment]::GetFolderPath('MyDocuments')
 if ([string]::IsNullOrWhiteSpace($script:Docs)) { $script:Docs = Join-Path $env:USERPROFILE 'Documents' }
 $script:Folder = Join-Path $script:Docs 'MVS-Lost-Media-T1'
 
+function LM-Banner([string]$Phase, [string]$Code) {
+    try { $Host.UI.RawUI.WindowTitle = 'LM / TIER ONE - SYSTEM CHECK - MVS LOST MEDIA' } catch { }
+    Clear-Host
+    LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
+    LM-Line ('  | ' + 'LM // TIER ONE'.PadRight(66) + ' |') Cyan
+    LM-Line ('  |' + ('-' * 68) + '|') DarkCyan
+    LM-Line ('  | ' + '        _       __  __'.PadRight(66) + ' |') Cyan
+    LM-Line ('  | ' + '       | |     |  \/  |'.PadRight(66) + ' |') Cyan
+    LM-Line ('  | ' + '       | |     | |\/| |   M V S   /   L O S T   M E D I A'.PadRight(66) + ' |') Cyan
+    LM-Line ('  | ' + '       | |___  | |  | |   INTEGRITY / MATCH / REVIEW'.PadRight(66) + ' |') White
+    LM-Line ('  | ' + '       |_____| |_|  |_|'.PadRight(66) + ' |') Cyan
+    LM-Line ('  |' + ('-' * 68) + '|') DarkCyan
+    LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.4    SESSION: '+$Code).PadRight(66) + ' |') Magenta
+    LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
+    LM-Line '  [LOCAL CHECK] Somente leitura // Sem envio de relatorios' DarkGray
+    LM-Line '  [NOTICE] Um alerta isolado nao comprova cheat.' DarkYellow
+}
+function LM-Ending([string]$Phase) {
+    LM-Line ''
+    LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
+    LM-Line ('  | ' + ($Phase+' FINALIZADO  //  MVS LOST MEDIA').PadRight(66) + ' |') Cyan
+    LM-Line ('  | ' + 'Inspecao encerrada. Consulte os relatorios locais.'.PadRight(66) + ' |') Gray
+    LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
+    if ($NoPause) { return }
+    Write-Host ''
+    Write-Host '  >> Pressione QUALQUER TECLA para fechar...' -ForegroundColor Magenta
+    try {
+        if ([Console]::IsInputRedirected) { [void](Read-Host '  Pressione ENTER') }
+        else { [void][Console]::ReadKey($true) }
+    } catch { [void](Read-Host '  Pressione ENTER') }
+    exit
+}
 function LM-Line([string]$Message = '', [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Message -ForegroundColor $Color
     [void]$script:Lines.Add($Message)
@@ -26,17 +58,17 @@ function LM-Item([string]$Section, [string]$Label, [string]$Status, [string]$Det
     $palette = @{ OK='Green'; REVIEW='Yellow'; INFO='Gray'; UNVERIFIED='DarkYellow' }
     $color = 'White'
     if ($palette.ContainsKey($Status)) { $color = $palette[$Status] }
-    LM-Line ('  [{0,-10}] {1} | {2}' -f $Status, $Label, $Detail) $color
+    LM-Line ('  {0,-10} : {1,-28} | {2}' -f ('['+$Status+']'), $Label, $Detail) $color
     [void]$script:Rows.Add([pscustomobject]@{Section=$Section; Label=$Label; Status=$Status; Detail=$Detail})
 }
 function LM-Stage([string]$Title, [int]$Number) {
     LM-Line ''
-    LM-Line ('  [{0:00}] {1}' -f $Number,$Title) Cyan
-    LM-Line ('  ' + ('-' * 65)) DarkCyan
+    LM-Line ('  <<  {0:00}  /  {1}' -f $Number,$Title.ToUpperInvariant()) Magenta
+    LM-Line ('  ' + ('-' * 68)) DarkCyan
 }
 function LM-Progress([int]$Percent, [string]$Text) {
     $step = [Math]::Max(0,[Math]::Min(24,[int][Math]::Floor($Percent * 24 / 100)))
-    Write-Host ("`r  Verification [{0}{1}] {2,3}% {3}      " -f ('#' * $step),('.' * (24-$step)),$Percent,$Text) -NoNewline -ForegroundColor Cyan
+    Write-Host ("`r  LM-SCAN [{0}{1}] {2,3}%  //  {3}      " -f ('=' * $step),('.' * (24-$step)),$Percent,$Text) -NoNewline -ForegroundColor Cyan
     if ($Percent -ge 100) { Write-Host '' }
 }
 function LM-Admin {
@@ -211,33 +243,22 @@ function LM-SysmonCoverage {
         else { LM-Item 'TELEMETRIA' 'Sysmon' 'UNVERIFIED' 'Log desabilitado.' }
     } catch { LM-Item 'TELEMETRIA' 'Sysmon' 'UNVERIFIED' 'Nao instalado, sem acesso ou log ausente.' }
 }
-function LM-WriteCheckpoint {
-    try {
-        if (-not (Test-Path -LiteralPath $script:Folder)) { [void](New-Item -ItemType Directory -Path $script:Folder -Force -ErrorAction Stop) }
-        $state = [ordered]@{
-            Version='3.2'; Session=$script:Session; StartUtc=$script:StartTimeUtc.ToString('o');
-            StartSaved=$true; InitialPids=@($script:CurrentPids); InitialProcessCount=@($script:CurrentPids).Count
-        }
-        $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $script:Folder 'LM-T1-SESSION.json') -Encoding UTF8 -ErrorAction Stop
-        LM-Item 'SESSAO' 'Checkpoint' 'OK' 'Criado para comparacao com FINISH.'
-    } catch { LM-Item 'SESSAO' 'Checkpoint' 'UNVERIFIED' 'Falha ao salvar o checkpoint.' }
-}
 function LM-Export {
     try {
         if (-not (Test-Path -LiteralPath $script:Folder)) { [void](New-Item -ItemType Directory -Path $script:Folder -Force -ErrorAction Stop) }
-        $out = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-START-INSPECAO.txt')
-        $discord = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-START-DISCORD.txt')
+        $out = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-SYSTEM-INSPECAO.txt')
+        $discord = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-SYSTEM-DISCORD.txt')
         $script:Lines.ToArray() | Set-Content -LiteralPath $out -Encoding UTF8 -ErrorAction Stop
-        $d = @('**MVS LOST MEDIA | T1 START 3.2**',('Sessao: `'+$script:Session+'`'),'```')
+        $d = @('**MVS LOST MEDIA | T1 SYSTEM CHECK 3.4**',('Sessao: `'+$script:Session+'`'),'```')
         $d += @($script:Rows | ForEach-Object { '[{0}] {1}: {2}' -f $_.Status,$_.Label,$_.Detail })
         $d += @('```','Resultados sao indicios para revisao humana. Nao comprovam ausencia ou presenca de cheats.')
         $d | Set-Content -LiteralPath $discord -Encoding UTF8 -ErrorAction Stop
-        Write-Host ('  Relatorio: '+$out) -ForegroundColor Green
-        Write-Host ('  Discord: '+$discord) -ForegroundColor Green
+        Write-Host ('  [LOG] '+$out) -ForegroundColor Green
+        Write-Host ('  [TICKET] '+$discord) -ForegroundColor Green
     } catch { Write-Host ('  Falha ao salvar relatorio: '+$_.Exception.Message) -ForegroundColor Yellow }
 }
 function LM-Explorer {
-    LM-Stage 'ETAPA 2 DE 2 - PROCESS EXPLORER' 2
+    LM-Stage 'PROCESS EXPLORER - MICROSOFT ORIGINAL' 2
     LM-Line '  Inspecao visual opcional com ferramenta oficial da Microsoft.' Gray
     if ($SkipProcessExplorer -or $NoPause) { LM-Line '  [INFO] Process Explorer ignorado nesta execucao.' Gray; return }
     $answer = Read-Host '  Baixar e abrir o Process Explorer da Microsoft? (S/N)'
@@ -263,16 +284,9 @@ function LM-Explorer {
     } catch { LM-Item 'PROCESS EXPLORER' 'Ferramenta opcional' 'UNVERIFIED' ('Nao iniciada: '+$_.Exception.Message) }
 }
 
-Clear-Host
-LM-Line '  +----------------------------------------------------------------+' DarkCyan
-LM-Line '  |                         MVS LOST MEDIA                         |' Cyan
-LM-Line '  |                  TIER 1 / SECURITY VERIFICATION               |' Cyan
-LM-Line '  |                       BUILD 3.2  -  START                     |' DarkCyan
-LM-Line '  +----------------------------------------------------------------+' DarkCyan
-LM-Line ('  SESSAO '+$script:Session+' | Apenas consulta | Nenhuma remocao automatica') Gray
-LM-Line '  Alertas isolados nao comprovam trapaça.' DarkYellow
+LM-Banner 'SYSTEM CHECK' $script:Session
 LM-Progress 10 'Ambiente'
-LM-Stage 'ETAPA 1 DE 2 - SISTEMA E INTEGRIDADE' 1
+LM-Stage 'VERIFICACAO DE INTEGRIDADE' 1
 LM-CheckWindows
 LM-Progress 28 'Modulos'
 LM-CheckModules
@@ -283,15 +297,15 @@ LM-Progress 68 'Registro e processos'
 LM-CheckRegistry
 LM-CheckProcesses
 LM-SysmonCoverage
-LM-WriteCheckpoint
 LM-Progress 100 'Inspecao concluida'
 $passed = @($script:Rows | Where-Object {$_.Status -eq 'OK'}).Count
 $review = @($script:Rows | Where-Object {$_.Status -eq 'REVIEW'}).Count
 $unverified = @($script:Rows | Where-Object {$_.Status -eq 'UNVERIFIED'}).Count
 LM-Line ''
-LM-Line ('  RESUMO | OK '+$passed+' | REVISAO '+$review+' | NAO VERIFICADO '+$unverified) Cyan
+LM-Line ('  [RESULTADO]  OK: '+$passed+'   |   REVIEW: '+$review+'   |   NAO VERIFICADO: '+$unverified) Cyan
 LM-Line '  Nenhum percentual representa um computador livre de cheats.' DarkYellow
 LM-Explorer
 LM-Export
 LM-Line ''
-LM-Line '  START CONCLUIDO. Execute FINISH apos a partida.' Cyan
+LM-Line '  [INFO] Para concluir o T1, execute tambem o REGISTRY CHECK.' Cyan
+LM-Ending 'SYSTEM CHECK'
