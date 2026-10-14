@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
-MVS LOST MEDIA | T1 SYSTEM CHECK 3.6.0
-Independent LM implementation: additional defensive review checks inspired by the LOC workflow.
+MVS LOST MEDIA | T1 SYSTEM CHECK 3.7.0
+Independent LM implementation with priority-based evidence review and conservative alerts.
 No LOC source code is copied or executed.
 Read-only security checks; optional official Microsoft Process Explorer download.
 Does not delete files, stop other processes, change registry/security settings,
@@ -35,10 +35,10 @@ function LM-Banner([string]$Phase, [string]$Code) {
     LM-Line ('  | ' + '       | |___  | |  | |   INTEGRITY / MATCH / REVIEW'.PadRight(66) + ' |') White
     LM-Line ('  | ' + '       |_____| |_|  |_|'.PadRight(66) + ' |') Cyan
     LM-Line ('  |' + ('-' * 68) + '|') DarkCyan
-    LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.6.0    SESSION: '+$Code).PadRight(66) + ' |') Magenta
+    LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.7.0    SESSION: '+$Code).PadRight(66) + ' |') Magenta
     LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
     LM-Line '  [LOCAL CHECK] Somente leitura // Sem envio de relatorios' DarkGray
-    LM-Line '  [NOTICE] Um alerta isolado nao comprova cheat.' DarkYellow
+    LM-Line '  [NOTICE] Alertas sao triagem tecnica, nao veredito nem prova de cheat.' DarkYellow
 }
 function LM-Ending([string]$Phase) {
     LM-Line ''
@@ -165,13 +165,13 @@ function LM-CheckProtections {
             @{Name='Tamper Protection'; Value=$st.IsTamperProtected}
         )) {
             if ($setting.Value -eq $true) { LM-Item 'SEGURANCA' $setting.Name 'OK' 'Habilitado.' }
-            elseif ($setting.Value -eq $false) { LM-Item 'SEGURANCA' $setting.Name 'REVIEW' 'Desabilitado nesta consulta.' }
+            elseif ($setting.Value -eq $false) { LM-Item 'SEGURANCA' $setting.Name 'ATENCAO' 'Desabilitado nesta consulta; pode haver antivirus alternativo.' }
             else { LM-Item 'SEGURANCA' $setting.Name 'UNVERIFIED' 'Estado nao informado.' }
         }
     } catch { LM-Item 'SEGURANCA' 'Microsoft Defender' 'UNVERIFIED' 'Status nao acessivel.' }
     try {
         foreach ($f in @(Get-NetFirewallProfile -ErrorAction Stop)) {
-            $status = if ($f.Enabled -eq $true) {'OK'} else {'REVIEW'}
+            $status = if ($f.Enabled -eq $true) {'OK'} else {'ATENCAO'}
             LM-Item 'SEGURANCA' ('Firewall '+$f.Name) $status $(if ($f.Enabled) {'Ativo.'} else {'Desativado.'})
         }
     } catch { LM-Item 'SEGURANCA' 'Firewall' 'UNVERIFIED' 'Consulta indisponivel.' }
@@ -191,7 +191,7 @@ function LM-CheckDefender {
             @{Label='IPs'; Prop='ExclusionIpAddress'}
         )) {
             $n = @($pref.($spec.Prop) | Where-Object { $null -ne $_ -and [string]$_ -ne '' }).Count
-            $status = if($n -gt 0){'REVIEW'}else{'OK'}
+            $status = if($n -gt 0){'ATENCAO'}else{'OK'}
             LM-Item 'DEFENDER' ('Exclusoes '+$spec.Label) $status ("$n entrada(s); nenhum nome/caminho e guardado.")
         }
     } catch { LM-Item 'DEFENDER' 'Exclusoes' 'UNVERIFIED' 'Nao foi possivel consultar as exclusoes.' }
@@ -213,8 +213,16 @@ function LM-CheckRegistry {
         try {
             $key = Get-Item -LiteralPath $entry.Path -ErrorAction Stop
             $fields = @($key.GetValueNames() | Where-Object { $_ -ne '' -and $_ -ne '(default)' })
-            $status = if($fields.Count -gt 0){'REVIEW'}else{'OK'}
-            LM-Item 'REGISTRO' $entry.Label $status ("$($fields.Count) valor(es) nao padrao; nao mostra dados privados.")
+            # Entradas de politica podem ser legitimamente definidas por usuario/empresa.
+            # Excecoes do Defender sao para revisao contextual, nao alerta vermelho automatico.
+            if ($entry.Label -like 'Politica*') {
+                $status = 'INFO'
+                $detail = "$($fields.Count) valor(es) de politica; presenca nao indica protecao desativada."
+            } else {
+                $status = if ($fields.Count -gt 0) { 'ATENCAO' } else { 'OK' }
+                $detail = "$($fields.Count) valor(es) de exclusao encontrados; verifique se sao intencionais."
+            }
+            LM-Item 'REGISTRO' $entry.Label $status $detail
         } catch { LM-Item 'REGISTRO' $entry.Label 'UNVERIFIED' 'Acesso negado ou falha.' }
     }
 }
@@ -241,16 +249,19 @@ function LM-InspectFile([string]$FullPath, [string]$Origin) {
         $location = LM-LocationClass $fi.FullName
         $status = 'INFO'
         $reasons = New-Object 'System.Collections.Generic.List[string]'
-        if ($signature -in @('HashMismatch', 'NotTrusted', 'UnknownError')) {
+        if ($signature -in @('HashMismatch', 'NotTrusted')) {
             $status='REVIEW'
-            [void]$reasons.Add('assinatura invalida/nao confiavel')
+            [void]$reasons.Add('assinatura invalida ou nao confiavel: requer revisao de integridade')
+        } elseif ($signature -eq 'UnknownError') {
+            $status='UNVERIFIED'
+            [void]$reasons.Add('erro ao consultar assinatura: resultado inconclusivo')
         } elseif ($signature -eq 'NotSigned') {
+            # Nao atribuir alerta vermelho somente pela ausencia de assinatura.
+            $status='ATENCAO'
             if ($location -eq 'Pasta do usuario') {
-                $status='REVIEW'
-                [void]$reasons.Add('sem assinatura e em pasta gravavel pelo usuario')
+                [void]$reasons.Add('sem assinatura + pasta do usuario (comum em aplicativos legitimos)')
             } else {
-                $status='ATENCAO'
-                [void]$reasons.Add('sem assinatura digital')
+                [void]$reasons.Add('sem assinatura digital (nao significa cheat)')
             }
         } elseif ($signature -eq 'Valid') {
             [void]$reasons.Add('assinatura valida (nao garante seguranca)')
@@ -372,6 +383,7 @@ function LM-SysmonRoblox {
             if ($evt.Id -eq 10) {
                 $granted=[string]$fields['GrantedAccess']
                 $rights='permissoes nao interpretadas'
+                $mask = $null
                 try {
                     $mask=[Convert]::ToInt64($granted.Replace('0x',''),16)
                     $rightsList=New-Object 'System.Collections.Generic.List[string]'
@@ -381,7 +393,17 @@ function LM-SysmonRoblox {
                     if (($mask -band 0x2) -ne 0) { [void]$rightsList.Add('CREATE_THREAD') }
                     $rights=if ($rightsList.Count -gt 0) {[string]::Join(',', $rightsList.ToArray())} else {'Outras permissoes'}
                 } catch { }
-                LM-Item 'EXTERNALS' $source 'REVIEW' ("Sysmon 10 | $date | concedido $granted ($rights); nao prova leitura/escrita de memoria.")
+                # Acesso concedido nao comprova leitura/escrita efetiva de memoria.
+                # Ler mascara sem permissao elevada gera informacao, nao alerta vermelho.
+                $accessStatus = 'INFO'
+                if ($null -ne $mask) {
+                    if ((($mask -band 0x20) -ne 0) -or (($mask -band 0x8) -ne 0) -or (($mask -band 0x2) -ne 0)) {
+                        $accessStatus = 'REVIEW'
+                    } elseif (($mask -band 0x10) -ne 0) {
+                        $accessStatus = 'ATENCAO'
+                    }
+                } else { $accessStatus = 'UNVERIFIED' }
+                LM-Item 'EXTERNALS' $source $accessStatus ("Sysmon 10 | $date | permissoes concedidas $granted ($rights); nao e prova de cheat.")
             } elseif ($evt.Id -eq 8) {
                 LM-Item 'EXECUTORES' $source 'REVIEW' ("Sysmon 8 | $date | thread remota registrada; verificar contexto.")
             } else {
@@ -403,7 +425,7 @@ function LM-SysmonCoverage {
     } catch { LM-Item 'TELEMETRIA' 'Sysmon' 'UNVERIFIED' 'Nao instalado, sem acesso ou log ausente.' }
 }
 
-# Verificacao 3.6: caminhos incomuns de processos com nomes reservados do Windows.
+# Verificacao 3.7: caminhos incomuns de processos com nomes reservados do Windows.
 # A localizacao nao prova fraude; a finalidade e ajudar o revisor.
 function LM-CheckProcessIdentity {
     LM-Stage 'IDENTIDADE DE PROCESSOS DO WINDOWS' 2
@@ -439,7 +461,8 @@ function LM-CheckProcessIdentity {
             if (-not $normal) {
                 $unusual++
                 $fileSignature = LM-Signature $raw
-                LM-Item 'IDENTIDADE' $name 'REVIEW' ("PID $($item.ProcessId) | local incomum para nome do Windows | assinatura $fileSignature | revisar origem")
+                $identityStatus = if ($fileSignature -in @('HashMismatch','NotTrusted','NotSigned')) { 'REVIEW' } else { 'ATENCAO' }
+                LM-Item 'IDENTIDADE' $name $identityStatus ("PID $($item.ProcessId) | local incomum para nome do Windows | assinatura $fileSignature | revisar origem")
             }
         }
         LM-Item 'IDENTIDADE' 'Cobertura de processos' 'INFO' ("$checked caminhos consultados; $unreadable indisponiveis; $unusual locais incomuns.")
@@ -453,7 +476,7 @@ function LM-CheckProcessIdentity {
     }
 }
 
-# Verificacao 3.6: eventos registrados de limpeza de logs, sem coleta do conteudo privado.
+# Verificacao 3.7: eventos registrados de limpeza de logs, sem coleta do conteudo privado.
 function LM-CheckEventLogHistory {
     LM-Stage 'HISTORICO DE AUDITORIA DO WINDOWS' 3
     $since = (Get-Date).AddHours(-2)
@@ -493,7 +516,7 @@ function LM-CheckEventLogHistory {
     }
 }
 
-# Verificacao 3.6: monitoramento limitado e opcional, somente lista de processos.
+# Verificacao 3.7: monitoramento limitado e opcional, somente lista de processos.
 # Uma amostragem a cada 5 segundos NAO acompanha programas que iniciam e fecham entre leituras.
 function LM-WatchProcesses {
     LM-Stage 'MONITORAMENTO TEMPORARIO DE PROCESSOS' 7
@@ -542,16 +565,35 @@ function LM-Export {
         if (-not (Test-Path -LiteralPath $script:Folder)) { [void](New-Item -ItemType Directory -Path $script:Folder -Force -ErrorAction Stop) }
         $out = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-SYSTEM-INSPECAO.txt')
         $discord = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-SYSTEM-DISCORD.txt')
-        $script:Lines.ToArray() | Set-Content -LiteralPath $out -Encoding UTF8 -ErrorAction Stop
-        # Nomes e SHA de arquivos analisados com permissao expressa, sem caminhos completos.
         $evidence = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-ARQUIVOS.txt')
+        $script:Lines.ToArray() | Set-Content -LiteralPath $out -Encoding UTF8 -ErrorAction Stop
+        # Apenas nomes, status, origem e SHA dos itens apontados ou escolhidos voluntariamente.
         @($script:Observations | Where-Object {$_.Status -in @('REVIEW','ATENCAO') -or $_.Origin -eq 'SELECIONADO'} |
             ForEach-Object { '{0} | {1} | {2} | {3} | SHA256={4}' -f $_.Name,$_.Status,$_.Origin,$_.Reason,$_.SHA256 }) |
             Set-Content -LiteralPath $evidence -Encoding UTF8 -ErrorAction Stop
-        $d = @('**MVS LOST MEDIA | T1 SYSTEM CHECK 3.6.0**',('Sessao: `'+$script:Session+'`'),'```')
-        $d += @($script:Rows | ForEach-Object { '[{0}] {1}: {2}' -f $_.Status,$_.Label,$_.Detail })
-        $d += @('```','Resultados sao indicios para revisao humana. Nao comprovam ausencia ou presenca de cheats.')
-        $d | Set-Content -LiteralPath $discord -Encoding UTF8 -ErrorAction Stop
+        $redRows = @($script:Rows | Where-Object {$_.Status -eq 'REVIEW'})
+        $yellowRows = @($script:Rows | Where-Object {$_.Status -eq 'ATENCAO'})
+        $unknownRows = @($script:Rows | Where-Object {$_.Status -eq 'UNVERIFIED'})
+        # Formato copiavel em uma unica mensagem Discord (limite conservador < 2000).
+        $d = New-Object 'System.Collections.Generic.List[string]'
+        [void]$d.Add('**MVS LOST MEDIA | T1 SYSTEM CHECK 3.7**')
+        [void]$d.Add('Sessao: `'+$script:Session+'`')
+        [void]$d.Add('**Cobertura e contagens**')
+        [void]$d.Add("REVIEW: $($redRows.Count) | ATENCAO: $($yellowRows.Count) | NAO VERIFICADO: $($unknownRows.Count)")
+        [void]$d.Add('**Itens para revisao**')
+        if ($redRows.Count -eq 0) { [void]$d.Add('Nenhum alerta prioritario observado na amostra.') }
+        else {
+            foreach ($row in @($redRows | Select-Object -First 5)) {
+                $candidate = ('- '+$row.Label+' ['+$row.Section+']: '+$row.Detail)
+                if ($candidate.Length -gt 170) { $candidate = $candidate.Substring(0,167)+'...' }
+                [void]$d.Add($candidate)
+            }
+            if ($redRows.Count -gt 5) { [void]$d.Add("Outros $($redRows.Count-5) itens no relatorio local.") }
+        }
+        [void]$d.Add('**Limites**')
+        if ($unknownRows.Count -gt 0) { [void]$d.Add('Algumas consultas nao puderam ser verificadas.') }
+        [void]$d.Add('Sem prova de cheat, nem certificado de PC limpo. Revisao humana obrigatoria.')
+        $d.ToArray() | Set-Content -LiteralPath $discord -Encoding UTF8 -ErrorAction Stop
         Write-Host ('  [ARQUIVOS] '+$evidence) -ForegroundColor Green
         Write-Host ('  [LOG] '+$out) -ForegroundColor Green
         Write-Host ('  [TICKET] '+$discord) -ForegroundColor Green
@@ -603,16 +645,26 @@ LM-SelectLocalFiles
 LM-Progress 91 'Eventos de processos'
 LM-SysmonRoblox
 LM-Progress 100 'Inspecao concluida'
-$passed = @($script:Rows | Where-Object {$_.Status -eq 'OK'}).Count
-$review = @($script:Rows | Where-Object {$_.Status -eq 'REVIEW'}).Count
-$unverified = @($script:Rows | Where-Object {$_.Status -eq 'UNVERIFIED'}).Count
-LM-Line ''
-LM-Line ('  [RESULTADO]  OK: '+$passed+'   |   REVIEW: '+$review+'   |   NAO VERIFICADO: '+$unverified) Cyan
-LM-Line '  [VERMELHO] = INDICIO PARA REVISAR; NAO SIGNIFICA CHEAT CONFIRMADO.' Red
-LM-Line '  Metadados nao revelam automaticamente se um programa e external ou executor.' DarkYellow
-LM-Line '  Nenhum percentual representa um computador livre de cheats.' DarkYellow
 LM-Explorer
 LM-WatchProcesses
+LM-Stage 'RESUMO DE EVIDENCIAS E LIMITACOES' 8
+$passed = @($script:Rows | Where-Object {$_.Status -eq 'OK'}).Count
+$reviewRows = @($script:Rows | Where-Object {$_.Status -eq 'REVIEW'})
+$attentionRows = @($script:Rows | Where-Object {$_.Status -eq 'ATENCAO'})
+$unverifiedRows = @($script:Rows | Where-Object {$_.Status -eq 'UNVERIFIED'})
+LM-Line ('  [RESULTADO] OK: '+$passed+' | REVIEW: '+$reviewRows.Count+' | ATENCAO: '+$attentionRows.Count+' | NAO VERIFICADO: '+$unverifiedRows.Count) Cyan
+if ($reviewRows.Count -gt 0) {
+    LM-Line '  ITENS PRIORITARIOS PARA REVISAO HUMANA:' Red
+    foreach ($finding in @($reviewRows | Select-Object -First 8)) {
+        LM-Line ('  [REVIEW] '+$finding.Label+' / '+$finding.Detail) Red
+    }
+    if ($reviewRows.Count -gt 8) { LM-Line '  Outros itens estao disponiveis no relatorio.' Gray }
+} else {
+    LM-Line '  Sem alertas prioritarios nesta amostra; isso NAO significa PC sem cheats.' DarkYellow
+}
+LM-Line '  [AMARELO] Sem assinatura, exclusoes ou caminhos incomuns exigem contexto.' Yellow
+LM-Line '  [VERMELHO] Sinal tecnico para revisar, nunca cheat comprovado.' Red
+LM-Line '  Consultas indisponiveis = NAO VERIFICADO; nenhum teste certifica PC limpo.' DarkYellow
 LM-Export
 LM-Line ''
 LM-Line '  [INFO] Para concluir o T1, execute tambem o REGISTRY CHECK.' Cyan
