@@ -1,207 +1,290 @@
 #requires -Version 5.1
 <#
-MVS LOST MEDIA - T1 RECORDING CHECK - v3.0 / START
-Original, read-only workflow for voluntary tournament recording review.
-No elevation, registry writes, security changes, external tools, uploads or network requests.
-Only writes session data (counts and PIDs), and a local report in Documents.
-Run this AFTER starting the screen recording, BEFORE the match.
-This does not detect or certify absence of cheats.
+MVS LOST MEDIA - T1 AUDIT 3.1
+Leitura local e voluntaria de informacoes de seguranca do Windows.
+Nenhum arquivo pessoal e examinado, nenhum dado e enviado e nenhuma
+configuracao de seguranca e alterada. Nao e um detector definitivo de cheats.
 #>
 [CmdletBinding()]
-param([switch]$SkipVisualList, [switch]$NoPrompts)
-
+param([switch]$NoClear)
 $ErrorActionPreference = 'Continue'
-$script:SessionCode = ([guid]::NewGuid().ToString('N').Substring(0,8)).ToUpperInvariant()
-$script:StartUtc = (Get-Date).ToUniversalTime()
-$script:Observations = New-Object System.Collections.ArrayList
-$script:ProcessSnapshot = @()
+$script:NowUtc = (Get-Date).ToUniversalTime()
+$script:ReportLines = New-Object System.Collections.Generic.List[string]
+$script:EventExecutor = New-Object System.Collections.Generic.List[object]
+$script:EventExternal = New-Object System.Collections.Generic.List[object]
+$script:Unsigned = New-Object System.Collections.Generic.List[object]
+$script:Tampering = 0
+$script:SysmonCoverage = 'NAO VERIFICADO'
+$script:SysmonDetails = 'Fonte de eventos nao consultada.'
+$script:Processes = @()
+$script:ProcessRead = $false
+$script:MaxPerGroup = 12
+$documents=[Environment]::GetFolderPath('MyDocuments')
+if ([string]::IsNullOrWhiteSpace($documents)) { $documents=Join-Path $env:USERPROFILE 'Documents' }
+$script:Directory=Join-Path $documents 'MVS-Lost-Media-T1'
 
-function LM-Line([string]$Text='', [ConsoleColor]$Color=[ConsoleColor]::Gray) {
+function LM-Print([string]$Text='', [ConsoleColor]$Color = [ConsoleColor]::Gray) {
     Write-Host $Text -ForegroundColor $Color
+    [void]$script:ReportLines.Add($Text)
 }
-function LM-Wait([string]$Message = 'Pressione ENTER para prosseguir para a proxima etapa') {
-    if (-not $NoPrompts) { [void](Read-Host "`n  $Message") }
+function LM-IsRoblox([string]$Image) {
+    if ([string]::IsNullOrWhiteSpace($Image)) { return $false }
+    return ($Image -match '(?i)(^|[\\/])RobloxPlayerBeta\.exe$')
 }
-function LM-Stage([string]$Number,[string]$Name) {
-    LM-Line ''
-    LM-Line ('  [{0}]  {1}' -f $Number,$Name.ToUpperInvariant()) Cyan
-    LM-Line ('  ' + ('-' * 62)) DarkCyan
+function LM-ShortName([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return 'Arquivo nao informado' }
+    $name = [IO.Path]::GetFileName($Path)
+    if ([string]::IsNullOrWhiteSpace($name)) { $name = $Path }
+    $name = $name -replace '[\r\n`<>]', '_'
+    if ($name.Length -gt 75) { $name=$name.Substring(0,75)+'...' }
+    return $name
 }
-function LM-Record([string]$Name,[string]$Status,[string]$Detail) {
-    [void]$script:Observations.Add([pscustomobject]@{Name=$Name;Status=$Status;Detail=$Detail})
-    $color = switch($Status) { 'OK' {'Green'} 'REVIEW' {'Yellow'} default {'DarkGray'} }
-    Write-Host ('  [{0,-12}] ' -f $Status) -ForegroundColor $color -NoNewline
-    LM-Line ($Name + ' - ' + $Detail)
+function LM-Section([string]$Title) {
+    LM-Print ''
+    LM-Print ('  ' + $Title) Cyan
+    LM-Print ('  ' + ('-' * 61)) DarkCyan
 }
-function LM-Bar([int]$Percent,[string]$Activity) {
-    $filled=[Math]::Max(0,[Math]::Min(28,[int][Math]::Floor($Percent*28/100)))
-    $bar=('=' * $filled) + ('.' * (28-$filled))
-    Write-Host ("`r  Verification [{0}] {1,3}%  {2}               " -f $bar,$Percent,$Activity) -NoNewline -ForegroundColor Cyan
+function LM-Bar([int]$Percent, [string]$Stage) {
+    $n = [Math]::Max(0,[Math]::Min(24,[int][Math]::Floor($Percent*24/100)))
+    Write-Host ("`r  Verification [{0}{1}] {2,3}%  {3}     " -f ('#' * $n),('.' * (24-$n)),$Percent,$Stage) -NoNewline -ForegroundColor Cyan
     if ($Percent -ge 100) { Write-Host '' }
 }
-function LM-CountEntries($value) {
-    return @($value | Where-Object { $null -ne $_ -and ([string]$_).Length -gt 0 }).Count
+function LM-GetProcesses {
+    try {
+        $script:Processes = @(Get-Process -ErrorAction Stop)
+        $script:ProcessRead = $true
+    } catch {
+        $script:Processes=@()
+        $script:ProcessRead=$false
+    }
 }
-function LM-SecuritySummary {
-    LM-Bar 12 'Windows Security'
-    try {
-        $d = Get-MpComputerStatus -ErrorAction Stop
-        if ($d.AntivirusEnabled -and $d.RealTimeProtectionEnabled) { LM-Record 'Microsoft Defender' 'OK' 'Antivirus e monitoramento em tempo real indicados como ativos.' }
-        else { LM-Record 'Microsoft Defender' 'REVIEW' 'Protecao nao indicada como inteiramente ativa; verifique o contexto.' }
-    } catch { LM-Record 'Microsoft Defender' 'NAO VERIFICADO' 'Consulta indisponivel; nao equivale a aprovacao.' }
-    LM-Bar 27 'Firewall'
-    try {
-        $fw = @(Get-NetFirewallProfile -ErrorAction Stop)
-        if ($fw.Count -gt 0 -and @($fw | Where-Object {$_.Enabled -ne $true}).Count -eq 0) {
-            LM-Record 'Firewall' 'OK' 'Perfis retornados pela consulta estao ativos.'
-        } else { LM-Record 'Firewall' 'REVIEW' 'Um ou mais perfis consultados nao aparecem ativos.' }
-    } catch { LM-Record 'Firewall' 'NAO VERIFICADO' 'Perfis nao puderam ser consultados.' }
-    LM-Bar 42 'Exclusoes do Defender'
-    try {
-        $pref = Get-MpPreference -ErrorAction Stop
-        $count=(LM-CountEntries $pref.ExclusionPath)+(LM-CountEntries $pref.ExclusionProcess)+(LM-CountEntries $pref.ExclusionExtension)
-        if($count -gt 0){ LM-Record 'Exclusoes Defender' 'REVIEW' ("$count entrada(s) nas tres categorias; caminhos nao sao exibidos.") }
-        else { LM-Record 'Exclusoes Defender' 'OK' 'Nenhuma entrada retornada nas tres categorias consultadas.' }
-    } catch { LM-Record 'Exclusoes Defender' 'NAO VERIFICADO' 'Consulta indisponivel; nao assumir zero exclusoes.' }
+function LM-ScanSignatures {
+    $unique = @{}
+    $scanned = 0
+    $unavailable = 0
+    foreach ($p in $script:Processes) {
+        if ($scanned -ge 110) { break }
+        $path = $null
+        try { $path = [string]$p.Path } catch { }
+        if ([string]::IsNullOrWhiteSpace($path)) { $unavailable++; continue }
+        $key=$path.ToLowerInvariant()
+        if ($unique.ContainsKey($key)) { continue }
+        $unique[$key]=$true
+        $scanned++
+        try {
+            $s = Get-AuthenticodeSignature -LiteralPath $path -ErrorAction Stop
+            if ($s.Status -ne 'Valid') {
+                [void]$script:Unsigned.Add([pscustomobject]@{
+                    Name=(LM-ShortName $path); Status=([string]$s.Status)
+                })
+            }
+        } catch {
+            [void]$script:Unsigned.Add([pscustomobject]@{
+                Name=(LM-ShortName $path); Status='Assinatura nao consultada'
+            })
+        }
+    }
+    return [pscustomobject]@{Scanned=$scanned;Unaccessible=$unavailable;LimitHit=($scanned -ge 110)}
 }
-function LM-ProcessSummary {
-    LM-Bar 60 'Processos ativos'
+function LM-GetEventFields($Event) {
+    $fields=@{}
     try {
-        $script:ProcessSnapshot = @(Get-Process -ErrorAction Stop)
-        LM-Record 'Processos' 'INFO' ("$($script:ProcessSnapshot.Count) processos no instante da consulta.")
-    } catch { LM-Record 'Processos' 'NAO VERIFICADO' 'Consulta indisponivel.'; $script:ProcessSnapshot=@() }
-    LM-Bar 75 'Roblox'
-    try {
-        $roblox = @($script:ProcessSnapshot | Where-Object {$_.ProcessName -eq 'RobloxPlayerBeta'})
-        if ($roblox.Count -gt 0) {
-            LM-Record 'Roblox' 'INFO' 'RobloxPlayerBeta encontrado.'
-            try {
-                $path = $roblox[0].Path
-                if ([string]::IsNullOrWhiteSpace($path)) { throw 'Sem acesso ao caminho.' }
-                $sig = Get-AuthenticodeSignature -LiteralPath $path -ErrorAction Stop
-                if ($sig.Status -eq 'Valid') { LM-Record 'Assinatura Roblox' 'OK' 'Assinatura do executavel consultado valida.' }
-                else { LM-Record 'Assinatura Roblox' 'REVIEW' ('Estado retornado: ' + [string]$sig.Status) }
-            } catch { LM-Record 'Assinatura Roblox' 'NAO VERIFICADO' 'Caminho ou assinatura inacessivel.' }
-        } else { LM-Record 'Roblox' 'NAO VERIFICADO' 'Roblox nao estava em execucao neste instante.' }
-    } catch { LM-Record 'Roblox' 'NAO VERIFICADO' 'Falha na consulta.' }
-    LM-Bar 90 'Cobertura de eventos'
-    try {
-        $sm = Get-WinEvent -ListLog 'Microsoft-Windows-Sysmon/Operational' -ErrorAction Stop
-        if ($sm.IsEnabled) { LM-Record 'Sysmon' 'INFO' 'Log presente e habilitado; eventos dependem da configuracao.' }
-        else { LM-Record 'Sysmon' 'NAO VERIFICADO' 'Log encontrado, mas nao habilitado.' }
-    } catch { LM-Record 'Sysmon' 'NAO VERIFICADO' 'Sem log acessivel; nao ha telemetria Sysmon confirmada.' }
-    LM-Bar 100 'Consultas concluidas'
+        [xml]$xml=$Event.ToXml()
+        foreach ($datum in $xml.Event.EventData.Data) {
+            $key=[string]$datum.Name
+            if (-not [string]::IsNullOrWhiteSpace($key)) { $fields[$key]=[string]$datum.'#text' }
+        }
+    } catch { }
+    return $fields
 }
-function LM-VisualReview {
-    if ($SkipVisualList) { LM-Record 'Inspecao visual' 'INFO' 'Lista visual ignorada a pedido do participante.'; return }
-    LM-Stage '06' 'Inspecao visual dos processos'
-    LM-Line '  Exiba os processos durante a gravacao. Role com calma; sem ocultar a janela.' White
-    LM-Line '  A lista permite pesquisar e ordenar. Feche-a para continuar.' Gray
-    LM-Line '  Aviso: a gravacao pode revelar nomes de programas particulares.' DarkYellow
-    LM-Wait 'Pressione ENTER para mostrar a lista'
+function LM-ReadSysmon([datetime]$SinceUtc) {
+    $name='Microsoft-Windows-Sysmon/Operational'
     try {
-        if (Get-Command Out-GridView -ErrorAction SilentlyContinue) {
-            @(Get-Process -ErrorAction Stop | Sort-Object ProcessName |
-                Select-Object @{Name='Processo';Expression={$_.ProcessName}},
-                              @{Name='PID';Expression={$_.Id}},
-                              @{Name='RAM_MB';Expression={[Math]::Round($_.WorkingSet64/1MB)}}) |
-                Out-GridView -Title 'MVS LOST MEDIA - T1 - Inspecao de processos (feche para continuar)' -Wait -ErrorAction Stop
-            LM-Record 'Inspecao visual' 'INFO' 'Janela da lista de processos exibida.'
-        } else {
-            LM-Line '  Out-GridView indisponivel. Abra o Gerenciador de Tarefas (Ctrl+Shift+Esc).' Yellow
-            LM-Record 'Inspecao visual' 'NAO VERIFICADO' 'Lista automatica indisponivel; conferencia manual sugerida.'
-            LM-Wait
+        $meta=Get-WinEvent -ListLog $name -ErrorAction Stop
+        if (-not $meta.IsEnabled) {
+            $script:SysmonDetails='Log Sysmon encontrado, mas desabilitado.'
+            return
         }
     } catch {
-        LM-Line '  Falha ao abrir a lista. Utilize Ctrl+Shift+Esc para revisar manualmente.' Yellow
-        LM-Record 'Inspecao visual' 'NAO VERIFICADO' 'Janela indisponivel; nao indica trapaça.'
-        LM-Wait
+        $script:SysmonDetails='Sysmon nao instalado, log ausente ou acesso negado.'
+        return
+    }
+    $script:SysmonCoverage='CONSULTADO'
+    $script:SysmonDetails='Eventos 8, 10 e 25, se registrados pela configuracao atual.'
+    foreach ($id in @(8,10,25)) {
+        $items=@()
+        try {
+            $items=@(Get-WinEvent -FilterHashtable @{LogName=$name;Id=$id;StartTime=$SinceUtc.ToLocalTime()} -MaxEvents 200 -ErrorAction Stop)
+        } catch {
+            if ($_.FullyQualifiedErrorId -notlike '*NoMatchingEventsFound*' -and
+                $_.Exception.Message -notmatch 'No events were found|Nenhum evento foi encontrado') {
+                $script:SysmonCoverage='PARCIAL'
+                $script:SysmonDetails='Pelo menos uma consulta de eventos falhou ou nao permitiu acesso.'
+            }
+            continue
+        }
+        if ($items.Count -ge 200) {
+            $script:SysmonCoverage='PARCIAL'
+            $script:SysmonDetails='Limite de 200 registros atingido em uma consulta; cobertura incompleta.'
+        }
+        foreach ($ev in $items) {
+            $f=LM-GetEventFields $ev
+            if ($id -eq 8 -and (LM-IsRoblox ([string]$f['TargetImage']))) {
+                [void]$script:EventExecutor.Add([pscustomobject]@{
+                    Name=(LM-ShortName ([string]$f['SourceImage']))
+                    Signal='Sysmon 8: thread remota registrada'
+                    Time=$ev.TimeCreated
+                })
+            }
+            if ($id -eq 10 -and (LM-IsRoblox ([string]$f['TargetImage'])) -and
+                -not (LM-IsRoblox ([string]$f['SourceImage']))) {
+                $raw=[string]$f['GrantedAccess']
+                $mask=[long]0
+                try { $mask=[Convert]::ToInt64(($raw -replace '^0[xX]',''),16) } catch { continue }
+                $rights=New-Object System.Collections.Generic.List[string]
+                if (($mask -band 0x10) -ne 0) { [void]$rights.Add('READ') }
+                if (($mask -band 0x20) -ne 0) { [void]$rights.Add('WRITE') }
+                if (($mask -band 0x08) -ne 0) { [void]$rights.Add('OPERATION') }
+                if (($mask -band 0x02) -ne 0) { [void]$rights.Add('CREATE_THREAD') }
+                if ($rights.Count -gt 0) {
+                    [void]$script:EventExternal.Add([pscustomobject]@{
+                        Name=(LM-ShortName ([string]$f['SourceImage']))
+                        Signal=('Sysmon 10: permissao '+($rights.ToArray() -join ',')+' ('+$raw+')')
+                        Time=$ev.TimeCreated
+                    })
+                }
+            }
+            if ($id -eq 25 -and (LM-IsRoblox ([string]$f['Image']))) {
+                $script:Tampering++
+            }
+        }
     }
 }
-
-Clear-Host
-LM-Line '  +------------------------------------------------------------------+' DarkCyan
-LM-Line '  |  MVS LOST MEDIA                                T1 / START  01     |' Cyan
-LM-Line '  |                                                                  |' DarkCyan
-LM-Line '  |                       _       __  __                             |' Cyan
-LM-Line '  |                      | |     |  \/  |                            |' Cyan
-LM-Line '  |                      | |     | |\/| |                            |' Cyan
-LM-Line '  |                      | |___  | |  | |                            |' Cyan
-LM-Line '  |                      |_____| |_|  |_|                            |' Cyan
-LM-Line '  |           L M  /  RECORDING CHECK - GUIADO                      |' White
-LM-Line '  |             ETAPAS GUIADAS + VERIFICACAO LOCAL                    |' DarkCyan
-LM-Line '  |                                                                  |' DarkCyan
-LM-Line '  |  BUILD 3.0   |   SOMENTE LEITURA   |   SEM ENVIO DE DADOS         |' Cyan
-LM-Line '  +------------------------------------------------------------------+' DarkCyan
-LM-Line ('  SESSAO: '+$script:SessionCode+'  |  '+(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) Gray
-LM-Line '  Este roteiro nao detecta todos os cheats nem garante PC limpo.' DarkGray
-LM-Stage '00' 'Iniciar a gravacao ANTES de continuar'
-LM-Line '  Comece uma gravacao continua da tela com cursor visivel.' White
-LM-Line '  Confira qualidade minima da politica do torneio (ex.: 720p/60fps).' Gray
-LM-Line '  Nao mostre senhas, mensagens privadas ou dados sensiveis.' Gray
-LM-Wait
-
-LM-Stage '01' 'Area de trabalho e bandeja do sistema'
-LM-Line '  Na gravacao: passe o mouse sobre os icones da bandeja do sistema.' White
-LM-Line '  Use Win+Tab para mostrar os desktops; confira os monitores em Configuracoes.' Gray
-LM-Line '  USB, overlays e programas de acessibilidade nao sao automaticamente suspeitos.' DarkGray
-LM-Wait
-
-LM-Stage '02' 'Windows Security'
-LM-Line '  Mostre a Seguranca do Windows: antivirus, firewall e isolamento do nucleo.' White
-LM-Line '  Mostre apenas a CONTAGEM de exclusoes; nao exponha caminhos particulares.' Gray
-LM-Line '  Nao altere UAC, Defender, firewall ou qualquer outra protecao.' DarkGray
-LM-Wait
-
-LM-Stage '03' 'Software de gravacao'
-LM-Line '  Mostre aplicativo usado, fontes de captura e configuracoes de gravacao.' White
-LM-Line '  Em OBS: confira Ferramentas > Scripts e os atalhos de gravacao.' Gray
-LM-Line '  Nenhum script/atalho e prova de cheat por si so.' DarkGray
-LM-Wait
-
-LM-Stage '04' 'Roblox em execucao'
-LM-Line '  Abra o Roblox e deixe o jogo aberto durante a proxima verificacao.' White
-LM-Line '  A gravacao deve continuar sem cortes; nao precisa entrar numa partida ainda.' Gray
-LM-Wait
-
-LM-Stage '05' 'Consultas automaticas (somente leitura)'
-LM-Line '  VERIFICANDO SEU PC' Cyan
-LM-SecuritySummary
-LM-ProcessSummary
-LM-Line ''
-LM-Line '  RESULTADOS PARCIAIS' Cyan
-foreach($item in $script:Observations){
-    LM-Line ('  [{0,-12}] {1} - {2}' -f $item.Status,$item.Name,$item.Detail)
+function LM-ShowFindings([string]$Title,[object[]]$Items) {
+    LM-Section $Title
+    $arr=@($Items | Sort-Object Name,Signal -Unique)
+    if ($arr.Count -eq 0) {
+        if ($script:SysmonCoverage -eq 'CONSULTADO') {
+            LM-Print '  NONE - nenhum indicio nos registros consultados.' Green
+        } else {
+            LM-Print '  NAO VERIFICADO - registros ausentes ou cobertura insuficiente.' Yellow
+        }
+        return
+    }
+    $counter=0
+    foreach ($item in $arr) {
+        if ($counter -ge $script:MaxPerGroup) { break }
+        LM-Print ('  [REVIEW] '+$item.Name) Yellow
+        LM-Print ('           '+$item.Signal) Gray
+        $counter++
+    }
+    if ($arr.Count -gt $script:MaxPerGroup) { LM-Print ('  + '+($arr.Count-$script:MaxPerGroup)+' registro(s) adicionais nao mostrados.') Gray }
+    LM-Print '  Sinal tecnico para revisao; nao e identificacao comprovada de cheat.' DarkYellow
 }
-LM-Wait
+function LM-ShowUnsigned {
+    LM-Section 'ARQUIVOS PARA REVISAO (SEM CLASSIFICACAO)'
+    $arr=@($script:Unsigned.ToArray() | Sort-Object Name,Status -Unique)
+    if ($arr.Count -eq 0) { LM-Print '  NONE - nenhum arquivo sinalizado na amostra de assinaturas.' Green; return }
+    foreach ($item in ($arr | Select-Object -First 12)) {
+        LM-Print ('  [REVIEW] '+$item.Name+' | '+$item.Status) Yellow
+    }
+    if ($arr.Count -gt 12) { LM-Print ('  + '+($arr.Count-12)+' outro(s) arquivo(s) na amostra.') Gray }
+    LM-Print '  Ausencia de assinatura NAO significa cheat.' DarkYellow
+}
+function LM-ShowProtection {
+    LM-Section 'PROTECOES E COBERTURA'
+    try {
+        $d=Get-MpComputerStatus -ErrorAction Stop
+        if($d.AntivirusEnabled -and $d.RealTimeProtectionEnabled) {
+            LM-Print '  [OK] Defender e protecao em tempo real ativos.' Green
+        } else { LM-Print '  [REVIEW] Estado do Defender exige conferencia.' Yellow }
+    } catch { LM-Print '  [NAO VERIFICADO] Defender indisponivel nesta consulta.' Yellow }
+    try {
+        $f=@(Get-NetFirewallProfile -ErrorAction Stop)
+        if ($f.Count -gt 0 -and @($f | Where-Object {$_.Enabled -ne $true}).Count -eq 0) {
+            LM-Print '  [OK] Perfis retornados do firewall habilitados.' Green
+        } else { LM-Print '  [REVIEW] Perfis de firewall exigem conferencia.' Yellow }
+    } catch { LM-Print '  [NAO VERIFICADO] Firewall nao consultado.' Yellow }
+    LM-Print ('  [INFO] Sysmon: '+$script:SysmonCoverage+' | '+$script:SysmonDetails) Gray
+    if ($script:Tampering -gt 0) {
+        LM-Print ('  [REVIEW] Sysmon 25 relacionado ao Roblox: '+$script:Tampering+' registro(s).') Yellow
+    }
+    if ($script:ProcessRead) {
+        $roblox=@($script:Processes | Where-Object {$_.ProcessName -eq 'RobloxPlayerBeta'})
+        LM-Print ('  [INFO] Processos ativos: '+$script:Processes.Count+' | Roblox: '+$roblox.Count+' instancia(s).') Gray
+    } else { LM-Print '  [NAO VERIFICADO] Processos nao consultados.' Yellow }
+}
+function LM-SaveReport([string]$Phase,[string]$Code) {
+    try {
+        if (-not (Test-Path -LiteralPath $script:Directory)) {
+            New-Item -ItemType Directory -Path $script:Directory -Force -ErrorAction Stop | Out-Null
+        }
+        $stem='LM-T1-'+$Code+'-'+$Phase
+        $txt=Join-Path $script:Directory ($stem+'.txt')
+        $discord=Join-Path $script:Directory ($stem+'-DISCORD.txt')
+        $script:ReportLines.ToArray() | Set-Content -LiteralPath $txt -Encoding UTF8 -ErrorAction Stop
+        $disc=New-Object System.Collections.Generic.List[string]
+        [void]$disc.Add('**MVS LOST MEDIA | T1 '+$Phase+'**')
+        [void]$disc.Add('Sessao: `'+$Code+'`')
+        [void]$disc.Add('```')
+        foreach ($line in $script:ReportLines) {
+            [void]$disc.Add(($line -replace '`','_'))
+        }
+        [void]$disc.Add('```')
+        [void]$disc.Add('**Aviso:** alertas isolados nao comprovam trapaça. NONE e NAO VERIFICADO nao equivalem a PC limpo.')
+        $disc.ToArray() | Set-Content -LiteralPath $discord -Encoding UTF8 -ErrorAction Stop
+        LM-Print ''
+        LM-Print ('  Relatorio: '+$txt) Green
+        LM-Print ('  Texto Discord: '+$discord) Green
+    } catch {
+        LM-Print ('  [AVISO] Falha ao salvar relatorio: '+$_.Exception.Message) Yellow
+    }
+}
+function LM-Heading([string]$Phase,[string]$Code) {
+    if (-not $NoClear) { Clear-Host }
+    LM-Print '  +---------------------------------------------------------------+' DarkCyan
+    LM-Print '  |                    MVS LOST MEDIA                             |' Cyan
+    LM-Print ('  |                    T1 / '+$Phase.PadRight(36)+'|') Cyan
+    LM-Print '  |               AUDITORIA LOCAL - BUILD 3.1                    |' DarkCyan
+    LM-Print '  +---------------------------------------------------------------+' DarkCyan
+    LM-Print ('  SESSAO: '+$Code+'  |  '+(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')) Gray
+    LM-Print '  Somente leitura | Sem envio de dados | Sem veredito automatico' DarkGray
+}
 
-LM-VisualReview
-LM-Stage '07' 'Iniciar a partida'
-LM-Line '  Com a gravacao ainda ativa, entre na partida de Roblox/MVSD.' White
-LM-Line '  Nao interrompa nem edite o video. Ao terminar a partida, execute o' Gray
-LM-Line '  SEGUNDO COMANDO LM T1 / FINISH com a gravacao ainda ligada.' Gray
-LM-Wait 'Pressione ENTER para salvar o checkpoint inicial'
-
+# START: checkpoint gravado ANTES das consultas, sem roteiro de gravacao.
+$script:SessionCode=([guid]::NewGuid().ToString('N').Substring(0,8)).ToUpperInvariant()
+LM-Heading 'START' $script:SessionCode
+LM-Bar 10 'Criando checkpoint'
 try {
-    $documents = [Environment]::GetFolderPath('MyDocuments')
-    if ([string]::IsNullOrWhiteSpace($documents)) { $documents=Join-Path $env:USERPROFILE 'Documents' }
-    $dir = Join-Path $documents 'MVS-Lost-Media-T1'
-    New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
-    $pids=@($script:ProcessSnapshot | ForEach-Object {[int]$_.Id})
+    if (-not (Test-Path -LiteralPath $script:Directory)) { New-Item -ItemType Directory -Path $script:Directory -Force -ErrorAction Stop | Out-Null }
     $state=[ordered]@{
-        Version='3.0'; Session=$script:SessionCode; StartUtc=$script:StartUtc.ToString('o')
-        InitialCount=[int]$script:ProcessSnapshot.Count; InitialPids=$pids
-        InitialRobloxCount=@($script:ProcessSnapshot | Where-Object {$_.ProcessName -eq 'RobloxPlayerBeta'}).Count
-        Checks=@($script:Observations.ToArray())
+        Version='3.1'; Session=$script:SessionCode; StartUtc=$script:NowUtc.ToString('o')
+        StartSaved=$true; InitialPids=@(); InitialProcessCount=0
     }
-    $jsonFile=Join-Path $dir 'LM-T1-SESSION.json'
-    $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonFile -Encoding UTF8 -ErrorAction Stop
-    $txtFile=Join-Path $dir ('LM-T1-'+$script:SessionCode+'-START.txt')
-    $lines=@('MVS LOST MEDIA / T1 / START','Session: '+$script:SessionCode,'Started UTC: '+$script:StartUtc.ToString('o'),'Local report. No automatic cheating verdict.','')
-    foreach($o in $script:Observations){$lines+=('[{0}] {1}: {2}' -f $o.Status,$o.Name,$o.Detail)}
-    $lines | Set-Content -LiteralPath $txtFile -Encoding UTF8 -ErrorAction Stop
-    LM-Line ('  Checkpoint gravado em: '+$txtFile) Green
-    LM-Line '  Dados locais da sessao: contagem e PIDs; nenhum nome salvo no resumo.' DarkGray
-} catch { LM-Line ('  AVISO: nao foi possivel salvar checkpoint: '+$_.Exception.Message) Yellow }
-LM-Line '  T1 / START concluido. Mantenha a gravacao ativa ate terminar o FINISH.' Cyan
-LM-Line '  Ao voltar para PS>, o script acabou; o terminal fica aberto normalmente.' DarkGray
+    $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $script:Directory 'LM-T1-SESSION.json') -Encoding UTF8 -ErrorAction Stop
+    LM-Print '  [OK] Checkpoint inicial criado.' Green
+} catch { LM-Print ('  [AVISO] Nao foi possivel criar checkpoint: '+$_.Exception.Message) Yellow }
+LM-Bar 25 'Processos'
+LM-GetProcesses
+try {
+    if($script:ProcessRead){
+        $state.InitialPids=@($script:Processes | ForEach-Object {[int]$_.Id})
+        $state.InitialProcessCount=$script:Processes.Count
+        $state | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $script:Directory 'LM-T1-SESSION.json') -Encoding UTF8 -ErrorAction Stop
+    }
+} catch { LM-Print '  [AVISO] Checkpoint existe, mas a contagem de processos nao foi atualizada.' Yellow }
+LM-Bar 45 'Assinaturas'
+$coverage=LM-ScanSignatures
+LM-Bar 75 'Eventos existentes'
+$since=$script:NowUtc.AddMinutes(-30)
+LM-ReadSysmon $since
+LM-Bar 100 'Concluido'
+LM-ShowFindings 'EXECUTORES - SINAIS REGISTRADOS' $script:EventExecutor.ToArray()
+LM-ShowFindings 'EXTERNALS - SINAIS REGISTRADOS' $script:EventExternal.ToArray()
+LM-ShowUnsigned
+LM-ShowProtection
+LM-Print ('  [INFO] Assinaturas consultadas: '+$coverage.Scanned+' arquivo(s).') Gray
+LM-Print '  Categorias mostram indícios de eventos, NAO arquivos identificados como cheats.' DarkYellow
+LM-SaveReport 'START' $script:SessionCode
+LM-Print ''
+LM-Print '  START CONCLUIDO. Execute FINISH apos a partida para comparar a sessao.' Cyan
