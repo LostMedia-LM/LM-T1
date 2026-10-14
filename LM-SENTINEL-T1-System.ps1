@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-MVS LOST MEDIA | T1 SYSTEM CHECK 3.4
+MVS LOST MEDIA | T1 SYSTEM CHECK 3.4.1
 Independent implementation inspired by the categories of the MCL recording checks.
 Read-only security checks; optional official Microsoft Process Explorer download.
 Does not delete files, stop other processes, change registry/security settings,
@@ -30,7 +30,7 @@ function LM-Banner([string]$Phase, [string]$Code) {
     LM-Line ('  | ' + '       | |___  | |  | |   INTEGRITY / MATCH / REVIEW'.PadRight(66) + ' |') White
     LM-Line ('  | ' + '       |_____| |_|  |_|'.PadRight(66) + ' |') Cyan
     LM-Line ('  |' + ('-' * 68) + '|') DarkCyan
-    LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.4    SESSION: '+$Code).PadRight(66) + ' |') Magenta
+    LM-Line ('  | ' + ('MODE: '+$Phase+'    BUILD 3.4.1    SESSION: '+$Code).PadRight(66) + ' |') Magenta
     LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
     LM-Line '  [LOCAL CHECK] Somente leitura // Sem envio de relatorios' DarkGray
     LM-Line '  [NOTICE] Um alerta isolado nao comprova cheat.' DarkYellow
@@ -39,15 +39,24 @@ function LM-Ending([string]$Phase) {
     LM-Line ''
     LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
     LM-Line ('  | ' + ($Phase+' FINALIZADO  //  MVS LOST MEDIA').PadRight(66) + ' |') Cyan
-    LM-Line ('  | ' + 'Inspecao encerrada. Consulte os relatorios locais.'.PadRight(66) + ' |') Gray
+    LM-Line ('  | ' + 'Relatorios gravados. Os resultados permanecem na tela.'.PadRight(66) + ' |') Gray
     LM-Line ('  +' + ('-' * 68) + '+') DarkCyan
     if ($NoPause) { return }
     Write-Host ''
-    Write-Host '  >> Pressione QUALQUER TECLA para fechar...' -ForegroundColor Magenta
+    # Limpa teclas antigas (incluindo o ENTER usado para executar o comando).
+    # A mensagem so aparece DEPOIS de limpar a fila para nao encerrar sem querer.
     try {
-        if ([Console]::IsInputRedirected) { [void](Read-Host '  Pressione ENTER') }
-        else { [void][Console]::ReadKey($true) }
-    } catch { [void](Read-Host '  Pressione ENTER') }
+        if ([Console]::IsInputRedirected) {
+            [void](Read-Host '  Pressione ENTER para encerrar')
+        } else {
+            Start-Sleep -Milliseconds 350
+            while ([Console]::KeyAvailable) { [void][Console]::ReadKey($true) }
+            Write-Host '  >> Pressione QUALQUER TECLA para fechar...' -ForegroundColor Magenta
+            [void][Console]::ReadKey($true)
+        }
+    } catch {
+        [void](Read-Host '  Pressione ENTER para encerrar')
+    }
     exit
 }
 function LM-Line([string]$Message = '', [ConsoleColor]$Color = [ConsoleColor]::Gray) {
@@ -249,7 +258,7 @@ function LM-Export {
         $out = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-SYSTEM-INSPECAO.txt')
         $discord = Join-Path $script:Folder ('LM-T1-'+$script:Session+'-SYSTEM-DISCORD.txt')
         $script:Lines.ToArray() | Set-Content -LiteralPath $out -Encoding UTF8 -ErrorAction Stop
-        $d = @('**MVS LOST MEDIA | T1 SYSTEM CHECK 3.4**',('Sessao: `'+$script:Session+'`'),'```')
+        $d = @('**MVS LOST MEDIA | T1 SYSTEM CHECK 3.4.1**',('Sessao: `'+$script:Session+'`'),'```')
         $d += @($script:Rows | ForEach-Object { '[{0}] {1}: {2}' -f $_.Status,$_.Label,$_.Detail })
         $d += @('```','Resultados sao indicios para revisao humana. Nao comprovam ausencia ou presenca de cheats.')
         $d | Set-Content -LiteralPath $discord -Encoding UTF8 -ErrorAction Stop
