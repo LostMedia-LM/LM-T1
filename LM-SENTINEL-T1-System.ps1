@@ -1009,7 +1009,8 @@ $script:ExternalReaderAllowlist = @(
     'bloxstrap', 'fishstrap', 'lunarstrap',
     'msmpeng', 'nissrv', 'securityhealthservice', 'mpdefendercoreservice',
     'csrss', 'lsass', 'wininit', 'services', 'searchindexer', 'wmiprvse',
-    'powershell', 'pwsh', 'explorer'
+    'powershell', 'pwsh', 'explorer',
+    'svchost', 'dwm', 'taskhostw', 'sihost', 'fontdrvhost', 'runtimebroker'
 )
 
 $script:CaptureWindowAllowlist = @(
