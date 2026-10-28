@@ -42,7 +42,6 @@ function Check-Key {
         if ($nonDefault.Count -eq 0) {
             Write-Host "$name -> OK ✔ (EMPTY)" -ForegroundColor Green
         } else {
-
             $valueText = ($nonDefault | ForEach-Object {
                 "$($_.Name)=$($_.Value)"
             }) -join ", "
@@ -79,6 +78,6 @@ foreach ($p in $paths) {
     Check-Key (Convert-Path $p)
 }
 
-Write-Host ""
-Write-Host "Pressione Enter para sair..." -ForegroundColor Yellow
-Read-Host
+Write-Host "`nPressione QUALQUER TECLA para sair..." -ForegroundColor Yellow
+# O comando abaixo garante que a janela não feche até você apertar uma tecla
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
