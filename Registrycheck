@@ -1,3 +1,42 @@
+Clear-Host
+
+# ==========================================
+# AVISO DE SEGURANÇA (A PERGUNTA)
+# ==========================================
+Write-Host "Aviso de Segurança: Risco de Execução de Script" -ForegroundColor Yellow
+Write-Host "O código de script na página pode ser executado durante a análise." -ForegroundColor White
+Write-Host ""
+Write-Host "AÇÃO RECOMENDADA: Use o parâmetro -UseBasicParsing para evitar a execução do código de script." -ForegroundColor Gray
+Write-Host ""
+Write-Host "Deseja continuar? (S/N)" -ForegroundColor White
+$resposta = Read-Host
+
+if ($resposta -ne 'S' -and $resposta -ne 's') {
+    Write-Host "Operação cancelada pelo usuário." -ForegroundColor Red
+    Start-Sleep -Seconds 2
+    exit
+}
+
+Clear-Host
+
+# ==========================================
+# BANNER MVS LOST MEDIA
+# ==========================================
+Write-Host ""
+Write-Host "  ███╗   ███╗██╗   ██╗███████╗    ██╗      ██████╗ ███████╗████████╗    ███╗   ███╗███████╗██████╗ ██╗ █████╗ " -ForegroundColor Cyan
+Write-Host "  ████╗ ████║██║   ██║██╔════╝    ██║     ██╔═══██╗██╔════╝╚══██╔══╝    ████╗ ████║██╔════╝██╔══██╗██║██╔══██╗" -ForegroundColor Cyan
+Write-Host "  ██╔████╔██║██║   ██║███████╗    ██║     ██║   ██║███████╗   ██║       ██╔████╔██║█████╗  ██║  ██║██║███████║" -ForegroundColor Cyan
+Write-Host "  ██║╚██╔╝██║╚██╗ ██╔╝╚════██║    ██║     ██║   ██║╚════██║   ██║       ██║╚██╔╝██║██╔══╝  ██║  ██║██║██╔══██║" -ForegroundColor Cyan
+Write-Host "  ██║ ╚═╝ ██║ ╚████╔╝ ███████║    ███████╗╚██████╔╝███████║   ██║       ██║ ╚═╝ ██║███████╗██████╔╝██║██║  ██║" -ForegroundColor Cyan
+Write-Host "  ╚═╝     ╚═╝  ╚═══╝  ╚══════╝    ╚══════╝ ╚═════╝ ╚══════╝   ╚═╝       ╚═╝     ╚═╝╚══════╝╚═════╝ ╚═╝╚═╝  ╚═╝" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  MVS LOST MEDIA v1.0.0 - DEFENDER REGISTRY CHECK" -ForegroundColor White
+Write-Host "  Credits: Mangaka | Discord: https://discord.gg/2gP6MaKURK" -ForegroundColor White
+Write-Host ""
+
+# ==========================================
+# LÓGICA ORIGINAL (INTACTA)
+# ==========================================
 $paths = @(
     "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats",
     "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats\ThreatIDDefaultAction",
@@ -42,6 +81,7 @@ function Check-Key {
         if ($nonDefault.Count -eq 0) {
             Write-Host "$name -> OK ✔ (EMPTY)" -ForegroundColor Green
         } else {
+
             $valueText = ($nonDefault | ForEach-Object {
                 "$($_.Name)=$($_.Value)"
             }) -join ", "
@@ -54,19 +94,7 @@ function Check-Key {
     }
 }
 
-Clear-Host
-Write-Host "  ███╗   ███╗██╗   ██╗███████╗    ██╗      ██████╗ ███████╗████████╗    ███╗   ███╗███████╗██████╗ ██╗ █████╗ " -ForegroundColor Cyan
-Write-Host "  ████╗ ████║██║   ██║██╔════╝    ██║     ██╔═══██╗██╔════╝╚══██╔══╝    ████╗ ████║██╔════╝██╔══██╗██║██╔══██╗" -ForegroundColor Cyan
-Write-Host "  ██╔████╔██║██║   ██║███████╗    ██║     ██║   ██║███████╗   ██║       ██╔████╔██║█████╗  ██║  ██║██║███████║" -ForegroundColor Cyan
-Write-Host "  ██║╚██╔╝██║╚██╗ ██╔╝╚════██║    ██║     ██║   ██║╚════██║   ██║       ██║╚██╔╝██║██╔══╝  ██║  ██║██║██╔══██║" -ForegroundColor Cyan
-Write-Host "  ██║ ╚═╝ ██║ ╚████╔╝ ███████║    ███████╗╚██████╔╝███████║   ██║       ██║ ╚═╝ ██║███████╗██████╔╝██║██║  ██║" -ForegroundColor Cyan
-Write-Host "  ╚═╝     ╚═╝  ╚═══╝  ╚══════╝    ╚══════╝ ╚═════╝ ╚══════╝   ╚═╝       ╚═╝     ╚═╝╚══════╝╚═════╝ ╚═╝╚═╝  ╚═╝" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  MVS LOST MEDIA v1.0.0 - DEFENDER REGISTRY CHECK" -ForegroundColor White
-Write-Host "  Credits: Mangaka | Discord: https://discord.gg/2gP6MaKURK" -ForegroundColor White
-Write-Host ""
-
-Write-Host "=== REGISTRY PATHS BEING CHECKED ===" -ForegroundColor Cyan
+Write-Host "`n=== REGISTRY PATHS BEING CHECKED ===" -ForegroundColor Cyan
 foreach ($p in $paths) {
     Write-Host $p
 }
@@ -79,5 +107,4 @@ foreach ($p in $paths) {
 }
 
 Write-Host "`nPressione QUALQUER TECLA para sair..." -ForegroundColor Yellow
-# O comando abaixo garante que a janela não feche até você apertar uma tecla
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
