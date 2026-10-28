@@ -1,0 +1,84 @@
+$paths = @(
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats\ThreatIDDefaultAction",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats\ThreatSeverityDefaultAction",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats\ThreatTypeDefaultAction",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Exclusions",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Exclusions\Extensions",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Exclusions\IpAddresses",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Exclusions\Paths",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Exclusions\Processes",
+    "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Exclusions\TemporaryPaths"
+)
+
+function Convert-Path {
+    param([string]$p)
+    return $p -replace "HKEY_LOCAL_MACHINE", "HKLM:"
+}
+
+function Get-KeyName {
+    param([string]$Path)
+    return ($Path -split '\\')[-1]
+}
+
+function Check-Key {
+    param([string]$Path)
+
+    $name = Get-KeyName $Path
+
+    if (-not (Test-Path $Path)) {
+        Write-Host "$name -> NOT FOUND ❌"
+        return
+    }
+
+    try {
+        $props = Get-ItemProperty $Path -ErrorAction Stop
+
+        $values = $props.PSObject.Properties |
+            Where-Object { $_.Name -notlike "PS*" }
+
+        $nonDefault = $values | Where-Object { $_.Name -ne "(default)" }
+
+        if ($nonDefault.Count -eq 0) {
+            Write-Host "$name -> OK ✔ (EMPTY)" -ForegroundColor Green
+        } else {
+
+            $valueText = ($nonDefault | ForEach-Object {
+                "$($_.Name)=$($_.Value)"
+            }) -join ", "
+
+            Write-Host "$name -> NOT OK ❌ [$valueText]" -ForegroundColor Red
+        }
+
+    } catch {
+        Write-Host "$name -> NOT OK ❌" -ForegroundColor Red
+    }
+}
+
+Clear-Host
+Write-Host "  ███╗   ███╗██╗   ██╗███████╗    ██╗      ██████╗ ███████╗████████╗    ███╗   ███╗███████╗██████╗ ██╗ █████╗ " -ForegroundColor Cyan
+Write-Host "  ████╗ ████║██║   ██║██╔════╝    ██║     ██╔═══██╗██╔════╝╚══██╔══╝    ████╗ ████║██╔════╝██╔══██╗██║██╔══██╗" -ForegroundColor Cyan
+Write-Host "  ██╔████╔██║██║   ██║███████╗    ██║     ██║   ██║███████╗   ██║       ██╔████╔██║█████╗  ██║  ██║██║███████║" -ForegroundColor Cyan
+Write-Host "  ██║╚██╔╝██║╚██╗ ██╔╝╚════██║    ██║     ██║   ██║╚════██║   ██║       ██║╚██╔╝██║██╔══╝  ██║  ██║██║██╔══██║" -ForegroundColor Cyan
+Write-Host "  ██║ ╚═╝ ██║ ╚████╔╝ ███████║    ███████╗╚██████╔╝███████║   ██║       ██║ ╚═╝ ██║███████╗██████╔╝██║██║  ██║" -ForegroundColor Cyan
+Write-Host "  ╚═╝     ╚═╝  ╚═══╝  ╚══════╝    ╚══════╝ ╚═════╝ ╚══════╝   ╚═╝       ╚═╝     ╚═╝╚══════╝╚═════╝ ╚═╝╚═╝  ╚═╝" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  MVS LOST MEDIA v1.0.0 - DEFENDER REGISTRY CHECK" -ForegroundColor White
+Write-Host "  Credits: Mangaka | Discord: https://discord.gg/2gP6MaKURK" -ForegroundColor White
+Write-Host ""
+
+Write-Host "=== REGISTRY PATHS BEING CHECKED ===" -ForegroundColor Cyan
+foreach ($p in $paths) {
+    Write-Host $p
+}
+
+# ---- RUN CHECKS ----
+Write-Host "`n=== RESULTS ===" -ForegroundColor Cyan
+
+foreach ($p in $paths) {
+    Check-Key (Convert-Path $p)
+}
+
+Write-Host ""
+Write-Host "Pressione Enter para sair..." -ForegroundColor Yellow
+Read-Host
