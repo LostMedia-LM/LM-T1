@@ -1,3 +1,44 @@
+# ==========================================
+# PERGUNTA DE SEGURANÇA (AVISO DO WINDOWS)
+# ==========================================
+Clear-Host
+Write-Host ""
+Write-Host "Aviso de Segurança: Risco de Execução de Script" -ForegroundColor Yellow
+Write-Host "O código de script na página pode ser executado durante a análise." -ForegroundColor White
+Write-Host ""
+Write-Host "AÇÃO RECOMENDADA:" -ForegroundColor Gray
+Write-Host "Use o parâmetro -UseBasicParsing para evitar a execução do código de script." -ForegroundColor Gray
+Write-Host ""
+Write-Host "Deseja continuar?" -ForegroundColor White
+Write-Host "[S] Sim  [A] Sim para Todos  [N] Não  [T] Não para Todos  [U] Suspender  [?] Ajuda (o padrão é `"N`"): " -NoNewline
+$resposta = Read-Host
+
+if ($resposta -notmatch '^[SsAa]$') {
+    Write-Host "`nOperação cancelada." -ForegroundColor Red
+    Start-Sleep -Seconds 2
+    exit
+}
+
+Clear-Host
+
+# ==========================================
+# BANNER MVS LOST MEDIA
+# ==========================================
+Write-Host ""
+Write-Host "  ███╗   ███╗██╗   ██╗███████╗    ██╗      ██████╗ ███████╗████████╗    ███╗   ███╗███████╗██████╗ ██╗ █████╗ " -ForegroundColor Cyan
+Write-Host "  ████╗ ████║██║   ██║██╔════╝    ██║     ██╔═══██╗██╔════╝╚══██╔══╝    ████╗ ████║██╔════╝██╔══██╗██║██╔══██╗" -ForegroundColor Cyan
+Write-Host "  ██╔████╔██║██║   ██║███████╗    ██║     ██║   ██║███████╗   ██║       ██╔████╔██║█████╗  ██║  ██║██║███████║" -ForegroundColor Cyan
+Write-Host "  ██║╚██╔╝██║╚██╗ ██╔╝╚════██║    ██║     ██║   ██║╚════██║   ██║       ██║╚██╔╝██║██╔══╝  ██║  ██║██║██╔══██║" -ForegroundColor Cyan
+Write-Host "  ██║ ╚═╝ ██║ ╚████╔╝ ███████║    ███████╗╚██████╔╝███████║   ██║       ██║ ╚═╝ ██║███████╗██████╔╝██║██║  ██║" -ForegroundColor Cyan
+Write-Host "  ╚═╝     ╚═╝  ╚═══╝  ╚══════╝    ╚══════╝ ╚═════╝ ╚══════╝   ╚═╝       ╚═╝     ╚═╝╚══════╝╚═════╝ ╚═╝╚═╝  ╚═╝" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  MVS LOST MEDIA v1.0.0 - REGISTRY CHECK" -ForegroundColor White
+Write-Host "  Credits: Mangaka | Discord: https://discord.gg/2gP6MaKURK" -ForegroundColor White
+Write-Host ""
+
+# ==========================================
+# LÓGICA ORIGINAL (INTACTA)
+# ==========================================
 $paths = @(
     "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats",
     "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Defender\Threats\ThreatIDDefaultAction",
@@ -55,41 +96,7 @@ function Check-Key {
     }
 }
 
-# ==========================================
-# INTERFACE IDÊNTICA AO AVISO DO WINDOWS
-# ==========================================
-Clear-Host
-Write-Host ""
-Write-Host "Aviso de Segurança: Risco de Execução de Script" -ForegroundColor Yellow
-Write-Host "O código de script na página pode ser executado durante a análise." -ForegroundColor White
-Write-Host ""
-Write-Host "AÇÃO RECOMENDADA:" -ForegroundColor Gray
-Write-Host "Use o parâmetro -UseBasicParsing para evitar a execução do código de script." -ForegroundColor Gray
-Write-Host ""
-Write-Host "Deseja continuar?" -ForegroundColor White
-Write-Host "[S] Sim  [A] Sim para Todos  [N] Não  [T] Não para Todos  [U] Suspender  [?] Ajuda (o padrão é `"N`"): " -NoNewline
-$resposta = Read-Host
-
-if ($resposta -notmatch '^[SsAa]$') {
-    Write-Host "`nOperação cancelada." -ForegroundColor Red
-    Start-Sleep -Seconds 2
-    exit
-}
-
-Clear-Host
-Write-Host ""
-Write-Host "  ███╗   ███╗██╗   ██╗███████╗    ██╗      ██████╗ ███████╗████████╗    ███╗   ███╗███████╗██████╗ ██╗ █████╗ " -ForegroundColor Cyan
-Write-Host "  ████╗ ████║██║   ██║██╔════╝    ██║     ██╔═══██╗██╔════╝╚══██╔══╝    ████╗ ████║██╔════╝██╔══██╗██║██╔══██╗" -ForegroundColor Cyan
-Write-Host "  ██╔████╔██║██║   ██║███████╗    ██║     ██║   ██║███████╗   ██║       ██╔████╔██║█████╗  ██║  ██║██║███████║" -ForegroundColor Cyan
-Write-Host "  ██║╚██╔╝██║╚██╗ ██╔╝╚════██║    ██║     ██║   ██║╚════██║   ██║       ██║╚██╔╝██║██╔══╝  ██║  ██║██║██╔══██║" -ForegroundColor Cyan
-Write-Host "  ██║ ╚═╝ ██║ ╚████╔╝ ███████║    ███████╗╚██████╔╝███████║   ██║       ██║ ╚═╝ ██║███████╗██████╔╝██║██║  ██║" -ForegroundColor Cyan
-Write-Host "  ╚═╝     ╚═╝  ╚═══╝  ╚══════╝    ╚══════╝ ╚═════╝ ╚══════╝   ╚═╝       ╚═╝     ╚═╝╚══════╝╚═════╝ ╚═╝╚═╝  ╚═╝" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  MVS LOST MEDIA v1.0.0 - DEFENDER REGISTRY CHECK" -ForegroundColor White
-Write-Host "  Credits: Mangaka | Discord: https://discord.gg/2gP6MaKURK" -ForegroundColor White
-Write-Host ""
-
-Write-Host "=== REGISTRY PATHS BEING CHECKED ===" -ForegroundColor Cyan
+Write-Host "`n=== REGISTRY PATHS BEING CHECKED ===" -ForegroundColor Cyan
 foreach ($p in $paths) {
     Write-Host $p
 }
@@ -102,13 +109,14 @@ foreach ($p in $paths) {
 }
 
 # ==========================================
-# TRAVA FINAL (NÃO FECHA ATÉ APERTAR)
+# TRAVA FINAL (GARANTE QUE A JANELA NÃO FECHA)
 # ==========================================
-Write-Host "`nPressione QUALQUER TECLA para fechar..." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Press Enter to Continue" -ForegroundColor Yellow
 while ($true) {
     if ([System.Console]::KeyAvailable) {
-        [System.Console]::ReadKey($true) | Out-Null
-        break
+        $key = [System.Console]::ReadKey($true)
+        if ($key.Key -eq "Enter") { break }
     }
     Start-Sleep -Milliseconds 100
 }
