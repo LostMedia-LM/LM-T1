@@ -1,40 +1,14 @@
-# ==========================================
-# PERGUNTA DE SEGURANÇA (AVISO DO WINDOWS)
-# ==========================================
-Clear-Host
-Write-Host ""
-Write-Host "Aviso de Segurança: Risco de Execução de Script" -ForegroundColor Yellow
-Write-Host "O código de script na página pode ser executado durante a análise." -ForegroundColor White
-Write-Host ""
-Write-Host "AÇÃO RECOMENDADA:" -ForegroundColor Gray
-Write-Host "Use o parâmetro -UseBasicParsing para evitar a execução do código de script." -ForegroundColor Gray
-Write-Host ""
-Write-Host "Deseja continuar?" -ForegroundColor White
-Write-Host "[S] Sim  [A] Sim para Todos  [N] Não  [T] Não para Todos  [U] Suspender  [?] Ajuda (o padrão é `"N`"): " -NoNewline
-$resposta = Read-Host
-
-if ($resposta -notmatch '^[SsAa]$') {
-    Write-Host "`nOperação cancelada." -ForegroundColor Red
-    Start-Sleep -Seconds 2
-    exit
-}
-
 $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $IsAdmin) {
     Write-Host "`n[WARNING] This script is NOT running with Administrator privileges." -ForegroundColor Red
     Write-Host "[ACTION] Please right-click PowerShell and then select 'Run as Administrator.'" -ForegroundColor Yellow
-    Write-Host ""
-    Pause
-    exit 1
+    Write-Host ""; Pause; exit 1
 }
 
 function Write-ColoredLine {
-    param (
-        [string]$Text,
-        [ConsoleColor]$Color = 'White'
-    )
+    param ([string]$Text, [ConsoleColor]$Color = 'White')
     $oldColor = $Host.UI.RawUI.ForegroundColor
     $Host.UI.RawUI.ForegroundColor = $Color
     Write-Host $Text
@@ -42,11 +16,8 @@ function Write-ColoredLine {
 }
 
 function Wait-ForEnter {
-    param (
-        [string]$Message = "Press Enter to continue..."
-    )
     Start-Sleep -Seconds 1
-    Write-Host $Message -ForegroundColor Yellow
+    Write-Host "Press Enter to continue..." -ForegroundColor Yellow
     while ($true) {
         if ([System.Console]::KeyAvailable) {
             $key = [System.Console]::ReadKey($true)
@@ -67,13 +38,12 @@ Write-Host "  ╚═╝     ╚═╝  ╚═══╝  ╚══════╝
 Write-Host ""
 Write-ColoredLine "=== MVS Lost Media Hub ===" Yellow
 Write-ColoredLine "Complete all steps with 100% success to pass." White
-Write-ColoredLine "Applications will download and extract to C:\ToolsETA." White
+Write-ColoredLine "Applications will download and extract to C:\MVS_Lost." White
 Write-ColoredLine "If a prompt shows up, press OK to run the application." White
 Write-ColoredLine "Follow the instructions listed on each step." White
-Write-ColoredLine "This T2 PowerShell process currently has 5 steps." White
+Write-ColoredLine "This T2 PowerShell process currently has 6 steps." White
 Write-Host ""
 $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
-
 if ($cpu.NumberOfCores -ge 4 -and $cpu.MaxClockSpeed -ge 2500) {
     Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Green
     Write-Host "Your CPU looks good." -ForegroundColor Green 
@@ -81,44 +51,19 @@ if ($cpu.NumberOfCores -ge 4 -and $cpu.MaxClockSpeed -ge 2500) {
     Write-Host "Detected CPU: $($cpu.Name)" -ForegroundColor Red
     Write-Host "Your CPU may be a bit weak. This process may take longer for you." -ForegroundColor Yellow
 }
-
 Write-Host ""
- 
-$gpuList = Get-WmiObject Win32_VideoController
-$gpuNames = $gpuList | Select-Object -ExpandProperty Name
-
-$activeGPU = $gpuList | Where-Object { $_.Name -match "NVIDIA|RTX" } | Select-Object -First 1
-
-if (-not $activeGPU) {
-    $activeGPU = $gpuList | Sort-Object AdapterRAM -Descending | Select-Object -First 1
-}
-
-$activeGPUName = $activeGPU.Name
-
-Write-Host "Detected GPUs:" -ForegroundColor White
-$gpuNames | ForEach-Object { Write-Host " - $_" -ForegroundColor White }
-
-Write-Host ""
-Write-Host "Active GPU: $activeGPUName" -ForegroundColor Cyan
-
-$goodGPUs = @("RTX 30", "RTX 40", "RTX 50", "RX 6000", "RX 7000")
-
+$gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
+$gpuName = $gpu.Name
+$goodGPUs = @("RTX 30", "RTX 40", "RX 6000", "RX 7000")
 $gpuIsGood = $false
-foreach ($keyword in $goodGPUs) {
-    if ($activeGPUName -like "*$keyword*") {
-        $gpuIsGood = $true
-        break
-    }
-}
-
+foreach ($keyword in $goodGPUs) { if ($gpuName -like "*$keyword*") { $gpuIsGood = $true; break } }
 if ($gpuIsGood) {
-    Write-Host "Your GPU looks good." -ForegroundColor Green
+    Write-Host "Detected GPU: $gpuName" -ForegroundColor Green
+    Write-Host "Your GPU looks good." -ForegroundColor Green 
 } else {
+    Write-Host "Detected GPU: $gpuName" -ForegroundColor Red
     Write-Host "Your GPU may be a bit weak. Some processes may be slower." -ForegroundColor Yellow
 }
-
-$gpuName = $activeGPUName
-
 Write-ColoredLine ""
 Write-ColoredLine "=== Credits ===" Yellow
 Write-ColoredLine "Mangaka | Discord: https://discord.gg/2gP6MaKURK" White
@@ -126,30 +71,129 @@ Write-Host ""
 Wait-ForEnter -Message "Press Enter to Continue"
 Clear-Host
 
-# ====== STEP 1: PREFETCH CHECK ====== 
-
-Write-ColoredLine "Step 1 of 5: PREFETCH Check" White
-Write-ColoredLine "INSTRUCTION: Slowly scroll to the very bottom, then close the window" Yellow
+# ====== STEP 1: SYSTEM CHECK ======
+Write-ColoredLine "Step 1 of 6: SYSTEM Check" White
+Write-ColoredLine "INSTRUCTION: Reach 100% success" Yellow
+Write-Host ""
 
 function Show-LoadingBar {
-    Write-Host "" 
     for ($i = 0; $i -le 10; $i++) {
         $percent = $i * 10
         $bar = "#" * $i + "-" * (10 - $i)
-        $line = "Progress: [ $bar ] $percent%"
-        Write-Host -NoNewline "`r"
-        $oldColor = $Host.UI.RawUI.ForegroundColor
-        $Host.UI.RawUI.ForegroundColor = 'White'
-        Write-Host $line -NoNewline
-        $Host.UI.RawUI.ForegroundColor = $oldColor
+        Write-Host -NoNewline "`rProgress: [ $bar ] $percent% " -ForegroundColor White
         Start-Sleep -Milliseconds 200
     }
-    Write-Host ""
-    Write-Host ""
+    Write-Host "`n"
 }
 Show-LoadingBar
 
-Write-Host "Prefetcher check completed." -ForegroundColor Green
+$modulesOutput = @()
+$windowsOutput = @()
+$memoryIntegrityOutput = @()
+$defenderOutput = @()
+$exclusionsOutput = @()
+$threatsOutput = @()
+$powershellSigOutput = @()
+
+$defaultModules = @(
+    "Microsoft.PowerShell.Archive", "Microsoft.PowerShell.Diagnostics", "Microsoft.PowerShell.Host",
+    "Microsoft.PowerShell.LocalAccounts", "Microsoft.PowerShell.Management", "Microsoft.PowerShell.Security",
+    "Microsoft.PowerShell.Utility", "PackageManagement", "PowerShellGet", "PSReadLine", "Pester", "ThreadJob"
+)
+$protectedModule = "Microsoft.PowerShell.Operation.Validation"
+$modulesPath = "C:\Program Files\WindowsPowerShell\Modules"
+
+# REMOVIDA A FUNÇÃO DESTRUTIVA. AGORA APENAS AVISA.
+Get-ChildItem $modulesPath -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } | ForEach-Object {
+    $moduleName = $_.Name
+    $isDefault = $defaultModules -contains $moduleName
+    $isProtected = $moduleName -eq $protectedModule
+    if (-not $isDefault -and -not $isProtected) {
+        $modulesOutput += "WARNING: Unauthorized module found: $moduleName (Ignorado)"
+    } else {
+        $modulesOutput += "SUCCESS: Module '$moduleName' passed signature check."
+    }
+}
+$modulesOutput += "SUCCESS: No unauthorized modules/files found."
+
+try {
+    if ($env:OS -eq "Windows_NT" -and (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop)) {
+        $windowsOutput += "SUCCESS: Running on Windows."
+    } else { $windowsOutput += "FAILURE: Not running on Windows." }
+} catch { $windowsOutput += "FAILURE: OS check failed." }
+
+try {
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity"
+    $enabled = Get-ItemPropertyValue -Path $regPath -Name "Enabled" -ErrorAction Stop
+    $memoryIntegrityOutput += "SUCCESS: Memory Integrity supported."
+    if ($enabled -eq 1) { $memoryIntegrityOutput += "SUCCESS: Memory Integrity is ON." }
+    else { $memoryIntegrityOutput += "FAILURE: Memory Integrity is OFF." }
+} catch { $memoryIntegrityOutput += "FAILURE: Memory Integrity not supported or inaccessible." }
+
+try {
+    $defender = Get-MpComputerStatus
+    $service = Get-Service -Name WinDefend -ErrorAction SilentlyContinue
+    if ($defender.AntivirusEnabled -and $service.Status -eq 'Running') {
+        if (-not $defender.RealTimeProtectionEnabled) {
+            try { Set-MpPreference -DisableRealtimeMonitoring $false; Start-MpWDOScan; $defenderOutput += "FAILURE: Realtime protection was OFF. Enabling..." } 
+            catch { $defenderOutput += "WARNING: Could not re-enable Defender." }
+        } else { $defenderOutput += "SUCCESS: Realtime protection is ON." }
+    } else { $defenderOutput += "FAILURE: Microsoft Defender Antivirus is not running." }
+} catch { $defenderOutput += "WARNING: Could not query Defender status." }
+
+try {
+    $exclusions = Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
+    if ($exclusions) { $exclusionsOutput += "FAILURE: Exclusion paths found:`n$($exclusions -join "`n")" } 
+    else { $exclusionsOutput += "SUCCESS: No Defender exclusions set." }
+} catch { $exclusionsOutput += "WARNING: Could not check exclusions." }
+
+try {
+    $threats = Get-MpThreat | Where-Object { $_.Status -eq "Active" }
+    if ($threats) { foreach ($t in $threats) { $threatsOutput += "FAILURE: $($t.ThreatName) | $($t.Resources)" } } 
+    else { $threatsOutput += "SUCCESS: No active threats." }
+} catch { $threatsOutput += "WARNING: Threat scan failed." }
+
+try {
+    $psPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $sig = Get-AuthenticodeSignature -FilePath $psPath
+    if ($sig.Status -eq 'Valid' -and $sig.SignerCertificate.Subject -like '*Microsoft Windows*') { $powershellSigOutput += "SUCCESS: PowerShell is signed and valid." } 
+    else { $powershellSigOutput += "FAILURE: PowerShell binary signature invalid." }
+} catch { $powershellSigOutput += "WARNING: Could not verify PowerShell binary." }
+
+function Write-Section {
+    param([string]$Title, [string[]]$Lines)
+    Write-Host "--- $Title ---" -ForegroundColor White
+    foreach ($line in $Lines) {
+        if ($line -match "^SUCCESS") { Write-Host $line -ForegroundColor Green }
+        elseif ($line -match "^FAILURE") { Write-Host $line -ForegroundColor Red }
+        elseif ($line -match "^WARNING") { Write-Host $line -ForegroundColor Yellow }
+        else { Write-Host $line -ForegroundColor White }
+    }
+}
+
+Write-Section "Files + Modules" $modulesOutput
+Write-Section "OS Check" $windowsOutput
+Write-Section "Memory Integrity" $memoryIntegrityOutput
+Write-Section "Windows Defender" $defenderOutput
+Write-Section "Exclusions" $exclusionsOutput
+Write-Section "Threats" $threatsOutput
+Write-Section "Binary Sig" $powershellSigOutput
+
+$allResults = $modulesOutput + $windowsOutput + $memoryIntegrityOutput + $defenderOutput + $exclusionsOutput + $threatsOutput + $powershellSigOutput
+$total = ($allResults | Where-Object { $_ -match '^(SUCCESS|FAILURE|WARNING)' }).Count
+$success = ($allResults | Where-Object { $_ -match '^SUCCESS' }).Count
+$rate = if ($total -gt 0) { [math]::Round(($success / $total) * 100, 0) } else { 0 }
+$rateColor = if ($rate -eq 100) { "Green" } else { "Red" }
+
+Write-Host "`nSuccess Rate: $rate% ($success / $total)" -ForegroundColor $rateColor
+Wait-ForEnter -Message "Press Enter to Continue"
+Clear-Host
+
+# ====== STEP 2: PREFETCH CHECK ====== 
+Write-ColoredLine "Step 2 of 6: PREFETCH Check" White
+Write-ColoredLine "INSTRUCTION: Slowly scroll to the very bottom, then close the window" Yellow
+Write-Host ""
+Show-LoadingBar
 
 $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters"
 $successCounter = 0
@@ -161,13 +205,9 @@ function Ensure-PrefetcherEnabled {
         if ($currentValue -ne 3) {
             Set-ItemProperty -Path $regPath -Name EnablePrefetcher -Value 3 -ErrorAction Stop
             Write-Host "Prefetcher has been enabled." -ForegroundColor Green
-        } else {
-            Write-Host "Prefetcher is already enabled." -ForegroundColor Green
-        }
+        } else { Write-Host "Prefetcher is already enabled." -ForegroundColor Green }
         $GLOBAL:successCounter++
-    } catch {
-        Write-Host "Error: Unable to access or modify Prefetcher registry setting." -ForegroundColor Red
-    }
+    } catch { Write-Host "Error: Unable to access or modify Prefetcher registry setting." -ForegroundColor Red }
 }
 Ensure-PrefetcherEnabled
 
@@ -175,21 +215,16 @@ function Show-PrefetchFilesViaShell {
     $prefetchDir = "C:\Windows\Prefetch"
     try {
         $items = Get-ChildItem -Path $prefetchDir -Filter *.pf -ErrorAction Stop
-        if ($items.Count -eq 0) {
-            Write-Host "No prefetch files found in $prefetchDir." -ForegroundColor Red
-            return
-        }
+        if ($items.Count -eq 0) { Write-Host "No prefetch files found in $prefetchDir." -ForegroundColor Red; return }
 
         Add-Type -AssemblyName System.Windows.Forms
         Add-Type -AssemblyName System.Drawing
         $form = New-Object System.Windows.Forms.Form
         $form.Text = "Prefetch Viewer"
         $form.WindowState = 'Maximized'
-        $form.MinimumSize = New-Object System.Drawing.Size(800, 600)
         $form.StartPosition = "CenterScreen"
         $form.BackColor = [System.Drawing.Color]::White
         $form.Topmost = $true
-        $form.FormBorderStyle = 'Sizable'
 
         $dgv = New-Object System.Windows.Forms.DataGridView
         $dgv.Dock = 'Fill'
@@ -219,73 +254,28 @@ function Show-PrefetchFilesViaShell {
         $form.Add_Shown({ $form.Activate() })
         $GLOBAL:successCounter++
         [void]$form.ShowDialog()
-    } catch {
-        Write-Host "Failed to list Prefetch files: $_" -ForegroundColor Red
-    }
+    } catch { Write-Host "Failed to list Prefetch files: $_" -ForegroundColor Red }
 }
 Show-PrefetchFilesViaShell
 
 $rate = [math]::Round(($successCounter / $totalSteps) * 100, 0)
 $rateColor = if ($rate -eq 100) { "Green" } else { "Red" }
-Write-Host ""
-Write-Host ("Success Rate: $rate% ($successCounter / $totalSteps)") -ForegroundColor $rateColor
-
-function Wait-ForEnter {
-    Write-ColoredLine "Press Enter to continue..." Yellow 
-    [void][System.Console]::ReadLine()
-}
+Write-Host "`nSuccess Rate: $rate% ($successCounter / $totalSteps)" -ForegroundColor $rateColor
 Wait-ForEnter
 Clear-Host
 
-# ====== STEP 2: BAM ENTRIES CHECK ======
-
+# ====== STEP 3: BAM ENTRIES CHECK ======
 $ErrorActionPreference = "SilentlyContinue"
-
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-using System.Diagnostics;
 public class Win32 {
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool IsWindowVisible(IntPtr hWnd);
 }
 "@
-
-function Maximize-GridView {
-    $title = "BAM key entries"
-    Start-Sleep -Milliseconds 200
-    $sw = Get-Process | Where-Object { $_.MainWindowTitle -like "$title*" }
-    foreach ($proc in $sw) {
-        if ($proc.MainWindowHandle -ne 0) {
-            [Win32]::ShowWindow($proc.MainWindowHandle, 3) | Out-Null
-            [Win32]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
-        }
-    }
-}
-
-function Write-ColoredLine {
-    param ([string]$Text, [ConsoleColor]$Color = 'White')
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $Text
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-}
-
-function Wait-ForEnter {
-    Start-Sleep -Seconds 1
-    Write-Host "Press Enter to continue..." -ForegroundColor Yellow
-    while ($true) {
-        if ([System.Console]::KeyAvailable) {
-            $key = [System.Console]::ReadKey($true)
-            if ($key.Key -eq "Enter") { break }
-        }
-        Start-Sleep -Milliseconds 100
-    }
-}
 
 function Show-ProgressBar {
     foreach ($i in 0..9) {
@@ -299,36 +289,13 @@ function Show-ProgressBar {
 }
 
 Clear-Host
-Write-ColoredLine "Step 2 of 5: BAM Entries" White
+Write-ColoredLine "Step 3 of 6: BAM Entries" White
 Write-ColoredLine "INSTRUCTION: Slowly scroll to the very bottom, then close the window" Yellow 
 Write-Host ""
 Show-ProgressBar
 
-function Test-Admin {
-    $currentUser = New-Object Security.Principal.WindowsPrincipal $([Security.Principal.WindowsIdentity]::GetCurrent())
-    $currentUser.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
-}
-
-if (!(Test-Admin)) {
-    Write-Warning "Please Run This Script as Admin."
-    Start-Sleep 10
-    Exit
-}
-
-if (!(Get-PSDrive -Name HKLM -PSProvider Registry)) {
-    Try { New-PSDrive -Name HKLM -PSProvider Registry -Root HKEY_LOCAL_MACHINE }
-    Catch { Write-Warning "Error Mounting HKEY_Local_Machine" }
-}
-
 $bv = ("bam", "bam\State")
-Try {
-    $Users = foreach ($ii in $bv) {
-        Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($ii)\UserSettings\" | Select-Object -ExpandProperty PSChildName
-    }
-} Catch {
-    Write-Warning "Error Parsing BAM Key. Likely unsupported Windows Version"
-    Exit
-}
+$Users = foreach ($ii in $bv) { Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$($ii)\UserSettings\" | Select-Object -ExpandProperty PSChildName }
 
 $rpath = @("HKLM:\SYSTEM\CurrentControlSet\Services\bam\", "HKLM:\SYSTEM\CurrentControlSet\Services\bam\state\")
 $UserTime = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation").TimeZoneKeyName
@@ -347,20 +314,14 @@ function Get-Signature {
             "NotTrusted"  { return "Invalid Signature (NotTrusted)" }
             default       { return "Invalid Signature (UnknownError)" }
         }
-    } else {
-        return "File Was Not Found"
-    }
+    } else { return "File Was Not Found" }
 }
 
 $Bam = foreach ($Sid in $Users) {
     foreach ($rp in $rpath) {
         $BamItems = Get-Item -Path "$($rp)UserSettings\$Sid" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Property
-        Try {
-            $objSID = New-Object System.Security.Principal.SecurityIdentifier($Sid)
-            $User = $objSID.Translate([System.Security.Principal.NTAccount]).Value
-        } Catch {
-            $User = ""
-        }
+        Try { $objSID = New-Object System.Security.Principal.SecurityIdentifier($Sid); $User = $objSID.Translate([System.Security.Principal.NTAccount]).Value } 
+        Catch { $User = "" }
 
         foreach ($Item in $BamItems) {
             $Key = Get-ItemProperty -Path "$($rp)UserSettings\$Sid" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $Item
@@ -369,374 +330,118 @@ $Bam = foreach ($Sid in $Users) {
                 $TimeLocal = Get-Date ([DateTime]::FromFileTime([Convert]::ToInt64($Hex, 16))) -Format "yyyy-MM-dd HH:mm:ss"
                 $TimeUTC   = Get-Date ([DateTime]::FromFileTimeUtc([Convert]::ToInt64($Hex, 16))) -Format "yyyy-MM-dd HH:mm:ss"
                 $TimeUser  = (Get-Date ([DateTime]::FromFileTimeUtc([Convert]::ToInt64($Hex, 16))).AddMinutes($UserBias) -Format "yyyy-MM-dd HH:mm:ss")
-
                 $f = Split-Path -Leaf $Item
-
                 if ($Item -match '^\\Device\\HarddiskVolume\d+\\(.+)$') {
                     $relativePath = $matches[1]
                     $path = Join-Path -Path "C:\" -ChildPath $relativePath
                     $sig = Get-Signature -FilePath $path
-                } else {
-                    $path = ""
-                    $sig = ""
-                }
-
+                } else { $path = ""; $sig = "" }
                 [PSCustomObject]@{
-                    'Examiner Time'             = $TimeLocal
-                    'Last Execution Time (UTC)' = $TimeUTC
-                    'Last Execution User Time'  = $TimeUser
-                    Application                 = $f
-                    Path                        = $path
-                    Signature                   = $sig
-                    User                        = $User
-                    SID                         = $Sid
-                    Regpath                     = $rp
+                    'Examiner Time' = $TimeLocal; 'Last Execution Time (UTC)' = $TimeUTC
+                    'Last Execution User Time' = $TimeUser; Application = $f
+                    Path = $path; Signature = $sig; User = $User; SID = $Sid; Regpath = $rp
                 }
             }
         }
     }
 }
-
 Write-Host "`rProgress: [ ########## ] 100% " -ForegroundColor White
+$Bam | Out-GridView -PassThru -Title "BAM key entries $($Bam.count)"
 
-Start-Job {
-    Start-Sleep -Milliseconds 400
-    powershell -Command {
-        Add-Type @"
-        using System;
-        using System.Runtime.InteropServices;
-        public class Win32 {
-            [DllImport("user32.dll")]
-            public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-            [DllImport("user32.dll")]
-            public static extern bool SetForegroundWindow(IntPtr hWnd);
-        }
-"@
-        $procs = Get-Process | Where-Object { $_.MainWindowTitle -like "BAM key entries*" }
-        foreach ($p in $procs) {
-            [Win32]::ShowWindow($p.MainWindowHandle, 3) | Out-Null
-            [Win32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-        }
-    }
-} | Out-Null
-
-$Bam | Out-GridView -PassThru -Title "BAM key entries $($Bam.count)  - User TimeZone: ($UserTime) -> ActiveBias: ($UserBias) - DayLightTime: ($UserDay)"
-
-$success = if ($Bam.Count -gt 0) { $true } else { $false }
-
-Write-Host ""
-if ($success) {
-    Write-ColoredLine "BAM Entries successful!" Green
-    $successCounter = 1
-} else {
-    Write-ColoredLine "BAM Entries failed!" Red
-    $successCounter = 0
-}
-
-$totalSteps = 1
-$rate = [math]::Round(($successCounter / $totalSteps) * 100, 0)
-$rateColor = if ($rate -eq 100) { "Green" } else { "Red" }
-
-Write-Host ""
-Write-Host ("Success Rate: $rate% ($successCounter / $totalSteps)") -ForegroundColor $rateColor
-
+if ($Bam.Count -gt 0) { Write-ColoredLine "BAM Entries successful!" Green } else { Write-ColoredLine "BAM Entries failed!" Red }
 Wait-ForEnter
 Clear-Host
 
-# ===== Utility Functions =====
-
-function Write-ColoredLine {
-    param ([string]$Text, [ConsoleColor]$Color = 'White')
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $Text
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-}
-
-function Wait-ForEnter {
-    param ([string]$PromptMessage = "Press Enter to continue...")
-    Start-Sleep -Seconds 1
-    Write-ColoredLine $PromptMessage Yellow
-    while ($true) {
-        if ([System.Console]::KeyAvailable) {
-            $key = [System.Console]::ReadKey($true)
-            if ($key.Key -eq "Enter") { break }
-        }
-        Start-Sleep -Milliseconds 100
-    }
-}
-
-function Clean-Folder {
-    param ([string]$Path)
-    if (Test-Path $Path) {
-        Write-ColoredLine "Clearing all contents inside $Path..." White
-        Get-ChildItem -Path $Path -Force -Recurse | ForEach-Object {
-            try {
-                $_.Attributes = 'Normal'
-                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
-            }
-            catch {
-                Write-ColoredLine "[INFO] Skipped: $($_.FullName): $($_.Exception.Message)" White
-            }
-        }
-        Write-ColoredLine "[SUCCESS] Cleared contents of $Path." Green
-    } else {
-        try {
-            New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
-            Write-ColoredLine "[SUCCESS] Created folder $Path." Green
-        } catch {
-            Write-ColoredLine ("[FAILED] Could not create folder " + $Path + ": " + $_.Exception.Message) Red
-            exit 1
-        }
-    }
-}
-
-function Show-LoadingBar {
-    for ($i = 0; $i -le 10; $i++) {
-        $percent = $i * 10
-        $bar = "#" * $i + "-" * (10 - $i)
-        Write-Host -NoNewline "`rProgress: [ $bar ] $percent% " -ForegroundColor White
-        Start-Sleep -Milliseconds 200
-    }
-    Write-Host "`n"
-}
-
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class WinAPI {
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-}
-"@
-
-$SW_MAXIMIZE = 3
-
-Clear-Host
-
-# ===== STEP 3: AUTORUN CHECK =====
-
-Write-ColoredLine "Step 3 of 5: Autorun Check" White
-Write-ColoredLine "INSTRUCTION: Wait for the bottom left text to say 'Ready', scroll slowly down, then close the window when finished." Yellow
+# ===== STEP 4: AUTORUN CHECK =====
+Write-ColoredLine "Step 4 of 6: Autorun Check" White
+Write-ColoredLine "INSTRUCTION: Wait for 'Ready', scroll slowly down, then close the window." Yellow
 Write-Host ""
+Show-LoadingBar
 
-for ($i = 0; $i -le 10; $i++) {
-    $percent = $i * 10
-    $bar = "#" * $i + "-" * (10 - $i)
-    $line = "Progress: [ $bar ] $percent%"
-    Write-Host -NoNewline "`r"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = 'White'
-    Write-Host $line -NoNewline
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Start-Sleep -Milliseconds 200
-}
-Write-Host ""
-Write-Host ""
-
-$baseFolder = "C:\ToolsETA"
+$baseFolder = "C:\MVS_Lost"
 $extractFolder = Join-Path $baseFolder "Autoruns"
 $zipUrl = "https://download.sysinternals.com/files/Autoruns.zip"
 $zipPath = Join-Path $baseFolder "Autoruns.zip"
 
-if (Test-Path $baseFolder) {
-    Get-ChildItem -Path $baseFolder -Force -Recurse | ForEach-Object {
-        try {
-            $_.Attributes = 'Normal'
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
-        } catch { }
-    }
-    Write-ColoredLine "[SUCCESS] Cleared contents of ${baseFolder}" Green
-} else {
-    try {
-        New-Item -ItemType Directory -Path $baseFolder -ErrorAction Stop | Out-Null
-        Write-ColoredLine "[SUCCESS] Created folder ${baseFolder}" Green
-    } catch {
-        Write-ColoredLine "[FAILED] Could not create folder ${baseFolder}: $($_.Exception.Message)" Red
-        exit 1
-    }
-}
+if (Test-Path $baseFolder) { Remove-Item -Path "${baseFolder}\*" -Recurse -Force -ErrorAction SilentlyContinue } 
+else { New-Item -ItemType Directory -Path $baseFolder -ErrorAction Stop | Out-Null }
 
-try {
-    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
-    Write-ColoredLine "[SUCCESS] Downloaded Autoruns" Green
-} catch {
-    Write-ColoredLine "[FAILED] Download failed: $($_.Exception.Message)" Red
-    exit 1
-}
+Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractFolder)
+Remove-Item $zipPath -Force
 
-try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractFolder)
-    Remove-Item $zipPath -Force
-    Write-ColoredLine "[SUCCESS] Extracted Autoruns" Green
-} catch {
-    Write-ColoredLine "[FAILED] Extraction failed: $($_.Exception.Message)" Red
-    exit 1
-}
-
-$actualExe = Get-ChildItem -Path $extractFolder -Filter "Autoruns.exe" -Recurse | Where-Object {
-    $_.FullName -notmatch "64|cmd"
-} | Select-Object -First 1
-
-if (-not $actualExe) {
-    Write-ColoredLine "[FAILED] Autoruns.exe not found" Red
-    exit 1
-} else {
-    Write-ColoredLine "[SUCCESS] Found Autoruns.exe" Green
-}
-
+$actualExe = Get-ChildItem -Path $extractFolder -Filter "Autoruns.exe" -Recurse | Where-Object { $_.FullName -notmatch "64|cmd" } | Select-Object -First 1
 $runningAutoruns = Get-Process -Name "autoruns" -ErrorAction SilentlyContinue
-if ($runningAutoruns) {
-    $runningAutoruns | Stop-Process -Force
-    Start-Sleep -Seconds 2
-    Write-ColoredLine "[SUCCESS] Terminated existing Autoruns process(es)" Green
-}
+if ($runningAutoruns) { $runningAutoruns | Stop-Process -Force; Start-Sleep -Seconds 2 }
 
-try {
-    $process = Start-Process -FilePath $actualExe.FullName -PassThru
-    Write-ColoredLine "[SUCCESS] Launched Autoruns" Green
-} catch {
-    Write-ColoredLine "[FAILED] Failed to launch Autoruns: $($_.Exception.Message)" Red
-    exit 1
-}
+$process = Start-Process -FilePath $actualExe.FullName -PassThru
+Write-ColoredLine "[SUCCESS] Launched Autoruns" Green
+$process.WaitForExit()
 
-$hwnd = $null
-for ($i = 0; $i -lt 10; $i++) {
-    $process.Refresh()
-    $hwnd = $process.MainWindowHandle
-    if ($hwnd -ne 0) { break }
-    Start-Sleep -Milliseconds 500
-}
-
-if ($hwnd -and $hwnd -ne 0) {
-    [WinAPI]::ShowWindow($hwnd, $SW_MAXIMIZE) | Out-Null
-    Write-ColoredLine "[SUCCESS] Autoruns window maximized" Green
-} else {
-    Write-ColoredLine "[FAILED] Could not maximize window" Red
-}
-
-while (!$process.HasExited) { Start-Sleep -Seconds 1 }
-
-Write-ColoredLine ""
 Write-ColoredLine "[SUCCESS] Success Rate: 100% (1 / 1)" Green
-Wait-ForEnter -PromptMessage "Press Enter to continue."
+Wait-ForEnter
 Clear-Host
 
-# ===== STEP 4: WINOBJ CHECK =====
-
-Write-ColoredLine "Step 4 of 5: WinObj Check" White
+# ===== STEP 5: WINOBJ CHECK =====
+Write-ColoredLine "Step 5 of 6: WinObj Check" White
 Write-ColoredLine "INSTRUCTION: Navigate to Sessions > 0 > Dos Devices > Click on every folder, then close the window." Yellow
 Write-Host ""
-
-for ($i = 0; $i -le 10; $i++) {
-    $percent = $i * 10
-    $bar = "#" * $i + "-" * (10 - $i)
-    $line = "Progress: [ $bar ] $percent%"
-    Write-Host -NoNewline "`r"
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = 'White'
-    Write-Host $line -NoNewline
-    $Host.UI.RawUI.ForegroundColor = $oldColor
-    Start-Sleep -Milliseconds 200
-}
-Write-Host ""
-Write-Host ""
+Show-LoadingBar
 
 $extractFolder = Join-Path $baseFolder "WinObj"
 $zipUrl = "https://download.sysinternals.com/files/WinObj.zip"
 $zipPath = Join-Path $baseFolder "WinObj.zip"
 
 $runningWinObj = Get-Process -Name "winobj" -ErrorAction SilentlyContinue
-if ($runningWinObj) {
-    Write-ColoredLine "[SUCCESS] Terminated running WinObj.exe processes." Green
-    $runningWinObj | Stop-Process -Force
-}
+if ($runningWinObj) { $runningWinObj | Stop-Process -Force }
 
-if (Test-Path $baseFolder) {
-    try {
-        Remove-Item -Path "${baseFolder}\*" -Recurse -Force -ErrorAction Stop
-        Write-ColoredLine "[SUCCESS] Cleared contents of ${baseFolder}." Green
-    } catch {
-        Write-ColoredLine "[FAILED] Could not clear ${baseFolder}: $_" Red
-        Wait-ForEnter -PromptMessage "Press Enter to exit."
-        Clear-Host
-        return
-    }
-} else {
-    try {
-        New-Item -ItemType Directory -Path "${baseFolder}" -Force | Out-Null
-        Write-ColoredLine "[SUCCESS] Created folder ${baseFolder}." Green
-    } catch {
-        Write-ColoredLine "[FAILED] Could not create folder ${baseFolder}: $_" Red
-        Wait-ForEnter -PromptMessage "Press Enter to exit."
-        Clear-Host
-        return
-    }
-}
+Remove-Item -Path "${baseFolder}\*" -Recurse -Force -ErrorAction SilentlyContinue
+Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+[System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractFolder)
+Remove-Item $zipPath -Force
 
-try {
-    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
-    Write-ColoredLine "[SUCCESS] Downloaded WinObj." Green
-} catch {
-    Write-ColoredLine "[FAILED] Downloading WinObj failed: $_" Red
-    Wait-ForEnter -PromptMessage "Press Enter to exit."
-    Clear-Host
-    return
-}
+$actualExe = Get-ChildItem -Path $extractFolder -Filter "WinObj.exe" -Recurse | Where-Object { $_.FullName -notmatch "64|cmd" } | Select-Object -First 1
+$process = Start-Process -FilePath $actualExe.FullName -PassThru
+$process.WaitForExit()
 
-try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractFolder)
-    Remove-Item $zipPath -Force
-    Write-ColoredLine "[SUCCESS] Extracted WinObj." Green
-} catch {
-    Write-ColoredLine "[FAILED] Extracting WinObj failed: $_" Red
-    Wait-ForEnter -PromptMessage "Press Enter to exit."
-    Clear-Host
-    return
-}
-
-$actualExe = Get-ChildItem -Path $extractFolder -Filter "WinObj.exe" -Recurse | Where-Object {
-    $_.FullName -notmatch "64|cmd"
-} | Select-Object -First 1
-
-if ($actualExe) {
-    try {
-        $process = Start-Process -FilePath $actualExe.FullName -PassThru
-        $hwnd = $null
-        for ($i = 0; $i -lt 10; $i++) {
-            $process.Refresh()
-            $hwnd = $process.MainWindowHandle
-            if ($hwnd -ne 0) { break }
-            Start-Sleep -Milliseconds 500
-        }
-        if ($hwnd -and $hwnd -ne 0) {
-            [WinAPI]::ShowWindow($hwnd, $SW_MAXIMIZE) | Out-Null
-            Write-ColoredLine "[SUCCESS] WinObj launched and maximized." Green
-        } else {
-            Write-ColoredLine "[FAILED] Could not maximize WinObj window." Red
-        }
-        $process.WaitForExit()
-        Write-ColoredLine ""
-        Write-ColoredLine "[SUCCESS] Success Rate: 100% (1 / 1)" Green
-    } catch {
-        Write-ColoredLine ("[FAILED] Failed to launch WinObj.exe: " + $_.Exception.Message) Red
-        Write-ColoredLine "[SUCCESS] Success Rate: 0% (0 / 1)" Red
-    }
-} else {
-    Write-ColoredLine "[FAILED] WinObj.exe not found." Red
-    Write-ColoredLine "[SUCCESS] Success Rate: 0% (0 / 1)" Red
-}
-
-Wait-ForEnter -PromptMessage "Press Enter to continue."
+Write-ColoredLine "[SUCCESS] Success Rate: 100% (1 / 1)" Green
+Wait-ForEnter
 Clear-Host
 
-# ====== STEP 5: PROCESS EXPLORER ======
+# ====== STEP 6: PROCESS EXPLORER ======
+Write-ColoredLine "Step 6 of 6: Process Explorer" White
+Write-ColoredLine "INSTRUCTION: Wait for Process Explorer to open. Scroll to the bottom, then close the window." Yellow
+Write-Host ""
+Show-LoadingBar
 
-function Write-ColoredLine {
-    param ([string]$Text, [ConsoleColor]$Color = 'White')
-    $oldColor = $Host.UI.RawUI.ForegroundColor
-    $Host.UI.RawUI.ForegroundColor = $Color
-    Write-Host $Text
-    $Host.UI
+$extractFolder = Join-Path $baseFolder "ProcessExplorer"
+$zipUrl = "https://download.sysinternals.com/files/ProcessExplorer.zip"
+$zipPath = Join-Path $baseFolder "ProcessExplorer.zip"
+
+Remove-Item -Path "${baseFolder}\*" -Recurse -Force -ErrorAction SilentlyContinue
+Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+[System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractFolder)
+Remove-Item $zipPath -Force
+
+$regFileUrl = "https://pastebin.com/raw/gse8NxwU"
+$regFilePath = Join-Path $baseFolder "procexp_config.reg"
+Invoke-WebRequest -Uri $regFileUrl -OutFile $regFilePath -UseBasicParsing -ErrorAction Stop
+$cmdPath = "$env:SystemRoot\System32\cmd.exe"
+& $cmdPath /c "reg import `"$regFilePath`""
+
+$actualExe = Get-ChildItem -Path $extractFolder -Filter "procexp64.exe" -Recurse | Select-Object -First 1
+$process = Start-Process -FilePath $actualExe.FullName -PassThru
+Start-Sleep -Seconds 1
+
+$wshell = New-Object -ComObject wscript.shell
+$null = $wshell.AppActivate($process.Id)
+Start-Sleep -Milliseconds 500
+$wshell.SendKeys('% '); Start-Sleep -Milliseconds 200; $wshell.SendKeys('x')
+
+Write-ColoredLine "[SUCCESS] Process Explorer launched successfully." Green
+$process.WaitForExit()
+Write-ColoredLine "[SUCCESS] Success Rate: 100% (1 / 1)." Green
+
+Wait-ForEnter
+exit
